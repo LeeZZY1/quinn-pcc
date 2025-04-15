@@ -45,14 +45,14 @@ use std::time::{Duration, Instant};
 
 // use rand::{Rng, SeedableRng};
 
+use super::{Controller, ControllerFactory, BASE_DATAGRAM_SIZE};
 use crate::congestion::bbr2::bw_estimation::BandwidthEstimation;
 use crate::congestion::bbr2::min_max::MinMax;
 use crate::connection::RttEstimator;
-use super::{Controller, ControllerFactory, BASE_DATAGRAM_SIZE};
 
 mod bw_estimation;
-mod min_max;
 mod init;
+mod min_max;
 mod pacing;
 mod per_ack;
 mod per_loss;
@@ -95,9 +95,8 @@ pub struct Bbr2 {
     ack_aggregation: AckAggregationState,
     // random_number_generator: rand::rngs::StdRng,
     // bbrv2新增
-    
     max_datagram_size: usize,
-    send_quantum:usize,
+    send_quantum: usize,
     // rtt_estimator: Arc<RttEstimator>,
     delivered: usize,
     extra_acked: usize,
@@ -113,7 +112,7 @@ pub struct Bbr2 {
 impl Bbr2 {
     pub fn new(config: Arc<BbrConfig2>, current_mtu: u16) -> Self {
         let initial_window: u64 = config.initial_window;
-        let mut bbr2 = Self  {
+        let mut bbr2 = Self {
             config,
             current_mtu: current_mtu as u64,
             max_bandwidth: BandwidthEstimation::default(),
@@ -131,30 +130,33 @@ impl Bbr2 {
             round_count: 0,
             ack_aggregation: AckAggregationState::default(),
 
-            max_datagram_size: BASE_DATAGRAM_SIZE as usize, 
+            max_datagram_size: BASE_DATAGRAM_SIZE as usize,
             send_quantum: BASE_DATAGRAM_SIZE as usize,
-            delivered:0,
+            delivered: 0,
             extra_acked: 0,
             congestion_window: initial_window as usize,
             congestion_recovery_start_time: None,
             in_flight_size: 0,
             app_limited: false,
-            initial_congestion_window_packets:10,
+            initial_congestion_window_packets: 10,
             estimated_flight_size: 0,
             latest_rtt: Default::default(),
         };
         bbr2.on_init();
         bbr2
     }
-    
+
     // When entering the recovery episode.
     fn bbr2_enter_recovery(&mut self, in_flight: usize, now: Instant) {
         eprintln!("bbr2_enter_recovery");
         self.bbr2_state.prior_cwnd = per_ack::bbr2_save_cwnd(self);
-        eprint!("cwnd: {}",self.congestion_window);
-        self.congestion_window =
-            in_flight + self.bbr2_state.newly_acked_bytes.max(self.max_datagram_size * 4);
-        eprintln!(" ===> {}",self.congestion_window);
+        eprint!("cwnd: {}", self.congestion_window);
+        self.congestion_window = in_flight
+            + self
+                .bbr2_state
+                .newly_acked_bytes
+                .max(self.max_datagram_size * 4);
+        eprintln!(" ===> {}", self.congestion_window);
         self.congestion_recovery_start_time = Some(now);
 
         self.bbr2_state.packet_conservation = true;
@@ -180,9 +182,7 @@ impl Bbr2 {
         init::bbr2_init(self);
     }
 
-    fn on_packet_sent(
-        &mut self, _sent_bytes: usize, bytes_in_flight: usize, now: Instant,
-    ) {
+    fn on_packet_sent(&mut self, _sent_bytes: usize, bytes_in_flight: usize, now: Instant) {
         per_transmit::bbr2_on_transmit(self, bytes_in_flight, now);
     }
     // 这个packets: &mut Vec<Acked>需要自己搞一下
@@ -190,9 +190,7 @@ impl Bbr2 {
     //     &mut self, bytes_in_flight: usize, pkt: &mut Acked,
     //     now: Instant, _rtt_stats: &RttStats,
     // )
-    fn on_packets_acked(
-        &mut self, bytes_in_flight: usize, newly_acked_size: usize,now: Instant
-    ) {
+    fn on_packets_acked(&mut self, bytes_in_flight: usize, newly_acked_size: usize, now: Instant) {
         self.bbr2_state.newly_acked_bytes = newly_acked_size;
 
         // let time_sent = pkt.time_sent;
@@ -200,7 +198,6 @@ impl Bbr2 {
         self.bbr2_state.prior_bytes_in_flight = bytes_in_flight;
         // let mut bytes_in_flight = bytes_in_flight;
 
-        
         // per_ack::bbr2_update_model_and_state(self, &pkt, bytes_in_flight, now);
         per_ack::bbr2_update_model_and_state(self, bytes_in_flight, now);
 
@@ -208,8 +205,10 @@ impl Bbr2 {
         // bytes_in_flight -= pkt.size;
 
         // self.bbr2_state.newly_acked_bytes += pkt.size;
-        
-        if !self.loss_state.has_losses() && self.max_acked_packet_number > self.end_recovery_at_packet_number {
+
+        if !self.loss_state.has_losses()
+            && self.max_acked_packet_number > self.end_recovery_at_packet_number
+        {
             self.bbr2_exit_recovery();
         }
         // if let Some(ts) = time_sent {
@@ -227,11 +226,8 @@ impl Bbr2 {
     // fn congestion_event(
     //     &mut self, bytes_in_flight: usize, lost_bytes: usize,
     //     largest_lost_pkt: &Sent, now: Instant,
-    // ) 
-    fn congestion_event(
-        &mut self, bytes_in_flight: usize, lost_bytes: usize,
-        now: Instant,
-    ) {
+    // )
+    fn congestion_event(&mut self, bytes_in_flight: usize, lost_bytes: usize, now: Instant) {
         self.bbr2_state.newly_lost_bytes = lost_bytes;
 
         // per_loss::bbr2_update_on_loss(self, largest_lost_pkt, lost_bytes, now);
@@ -246,17 +242,18 @@ impl Bbr2 {
             self.end_recovery_at_packet_number = self.max_sent_packet_number;
             if !self.in_congestion_recovery(now) {
                 // Upon entering Fast Recovery.
-                eprintln!("congestion_event: bytes_in_flight:{}, lost_bytes:{}", bytes_in_flight, lost_bytes);
+                eprintln!(
+                    "congestion_event: bytes_in_flight:{}, lost_bytes:{}",
+                    bytes_in_flight, lost_bytes
+                );
                 self.bbr2_enter_recovery(bytes_in_flight - lost_bytes, now);
             }
         }
-        
     }
 
     fn in_congestion_recovery(&self, sent_time: Instant) -> bool {
         match self.congestion_recovery_start_time {
-            Some(congestion_recovery_start_time) =>
-                sent_time <= congestion_recovery_start_time,
+            Some(congestion_recovery_start_time) => sent_time <= congestion_recovery_start_time,
 
             None => false,
         }
@@ -280,16 +277,14 @@ impl Bbr2 {
             (rate * 8 / 1000) as isize
         }
     }
-
 }
-
 
 impl Controller for Bbr2 {
     fn on_sent(&mut self, now: Instant, bytes: u64, last_packet_number: u64) {
         // eprintln!("on_sent start");
         self.max_sent_packet_number = last_packet_number;
         self.max_bandwidth.on_sent(now, bytes);
-        
+
         self.estimated_flight_size = self.estimated_flight_size.saturating_add(bytes as usize); // 预估的flight 的 size
         self.on_packet_sent(bytes as usize, self.estimated_flight_size, now);
         // eprintln!("on_sent over");
@@ -308,8 +303,11 @@ impl Controller for Bbr2 {
             .on_ack(now, sent, bytes, self.round_count, app_limited);
         self.acked_bytes += bytes;
         self.estimated_flight_size = self.estimated_flight_size.saturating_sub(bytes as usize); // 预估的flight 的 size
-        
-        if ((now > self.bbr2_state.min_rtt_stamp + rtt.get().saturating_mul(MIN_RTT_FILTER_LEN)) && !app_limited) || self.min_rtt > rtt.min() {
+
+        if ((now > self.bbr2_state.min_rtt_stamp + rtt.get().saturating_mul(MIN_RTT_FILTER_LEN))
+            && !app_limited)
+            || self.min_rtt > rtt.min()
+        {
             self.min_rtt = rtt.min();
         }
         // eprintln!("on_ack over");
@@ -331,7 +329,7 @@ impl Controller for Bbr2 {
             self.round_count,
             self.max_bandwidth.get_estimate(),
         );
-        self.in_flight_size = in_flight as usize;// 更新
+        self.in_flight_size = in_flight as usize; // 更新
         self.estimated_flight_size = in_flight as usize;
         // 删除函数 bbr2_update_ack_aggregation
         self.bbr2_state.extra_acked = excess_acked as usize;
@@ -353,8 +351,7 @@ impl Controller for Bbr2 {
             }
         }
 
-
-        self.on_packets_acked(self.estimated_flight_size,bytes_acked as usize,  now);
+        self.on_packets_acked(self.estimated_flight_size, bytes_acked as usize, now);
 
         // self.update_recovery_state(is_round_start);
 
@@ -428,29 +425,25 @@ impl Controller for Bbr2 {
     }
 
     fn pacing_window(&self) -> u64 {
-        
         // return 10000000;
         // self.congestion_window as u64
         let min_rtt_secs = self.bbr2_state.min_rtt.as_secs_f64();
         if self.bbr2_state.pacing_rate == 0 || min_rtt_secs < 0.01 {
             // eprintln!("using cwnd, pacing_rate:{}, min_rtt:{}, cwnd:{}", self.bbr2_state.pacing_rate, min_rtt_secs, self.congestion_window);
             self.congestion_window as u64
-        }
-        else {
+        } else {
             let mut pacwid = (self.bbr2_state.pacing_rate as f64 * min_rtt_secs) as u64;
-            if pacwid < (0.2*self.congestion_window as f64) as u64 {
+            if pacwid < (0.2 * self.congestion_window as f64) as u64 {
                 // eprintln!("pacwid < 0.2*cwnd, pacing_rate:{}, min_rtt:{}, cwnd:{}", self.bbr2_state.pacing_rate, min_rtt_secs, self.congestion_window);
                 // self.congestion_window = self.congestion_window.max(self.max_datagram_size * 2);
-                pacwid = self.congestion_window as u64;  
-            }
-            else {
+                pacwid = self.congestion_window as u64;
+            } else {
                 // eprintln!("using origin pacwid pacing_rate:{}, min_rtt:{}, cwnd:{}", self.bbr2_state.pacing_rate, min_rtt_secs, self.congestion_window);
             }
             pacwid
         }
     }
 }
-
 
 /// Configuration for the [`Bbr`] congestion controller
 #[derive(Debug, Clone)]
@@ -890,7 +883,6 @@ impl State {
             inflight_latest: 0,
 
             // max_bw_filter: Minmax::new(0),
-
             cycle_count: 0,
 
             extra_acked_interval_start: now,
@@ -898,7 +890,6 @@ impl State {
             extra_acked_delivered: 0,
 
             // extra_acked_filter: Minmax::new(0),
-
             filled_pipe: false,
 
             full_bw: 0,
@@ -997,9 +988,9 @@ impl AckAggregationState {
 pub struct Acked {
     pub pkt_num: u64,
 
-    pub time_sent: Option<Instant>,// 本次ack的发送时间
+    pub time_sent: Option<Instant>, // 本次ack的发送时间
 
-    pub size: usize,// 本次ack确认发送的数据量
+    pub size: usize, // 本次ack确认发送的数据量
 
     pub rtt: Duration,
 

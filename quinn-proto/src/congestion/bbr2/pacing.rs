@@ -35,8 +35,8 @@ use super::*;
 pub(super) fn bbr2_init_pacing_rate(r: &mut Bbr2) {
     let bbr = &mut r.bbr2_state;
 
-    let srtt = Duration::from_millis(333).as_secs_f64();// gps
-    //INITIAL_RTT.as_secs_f64();
+    let srtt = Duration::from_millis(333).as_secs_f64(); // gps
+                                                         //INITIAL_RTT.as_secs_f64();
 
     // At init, cwnd is initcwnd.
     let nominal_bandwidth = r.congestion_window as f64 / srtt;
@@ -46,13 +46,11 @@ pub(super) fn bbr2_init_pacing_rate(r: &mut Bbr2) {
 }
 
 pub(super) fn bbr2_set_pacing_rate_with_gain(r: &mut Bbr2, pacing_gain: f64) {
-    let rate = (pacing_gain *
-        r.bbr2_state.bw as f64 *
-        (1.0 - PACING_MARGIN_PERCENT)) as u64;
+    let rate = (pacing_gain * r.bbr2_state.bw as f64 * (1.0 - PACING_MARGIN_PERCENT)) as u64;
 
-    if r.bbr2_state.filled_pipe ||
-        rate > r.bbr2_state.pacing_rate ||
-        r.bbr2_state.pacing_rate == r.bbr2_state.init_pacing_rate
+    if r.bbr2_state.filled_pipe
+        || rate > r.bbr2_state.pacing_rate
+        || r.bbr2_state.pacing_rate == r.bbr2_state.init_pacing_rate
     {
         r.bbr2_state.pacing_rate = rate;
     }

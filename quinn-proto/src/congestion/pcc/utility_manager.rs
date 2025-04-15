@@ -1,8 +1,8 @@
+use crate::congestion::pcc::monitor_interval_queue::MonitorInterval;
 use std::collections::VecDeque;
+use std::f64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::f64;
-use crate::congestion::pcc::monitor_interval_queue::MonitorInterval;
 const K_MAX_PACKET_SIZE: u64 = 1500;
 const K_BITS_PER_BYTE: usize = 8;
 const K_RTT_HISTORY_LEN: usize = 6;
@@ -43,7 +43,6 @@ pub struct IntervalStats {
     trending_gradient_error: f64,
     trending_deviation: f64,
 }
-
 
 impl Default for IntervalStats {
     fn default() -> Self {
@@ -125,7 +124,7 @@ impl PccUtilityManager {
             bits_per_second: 0,
         }
     }
-    
+
     pub(super) fn get_utility_tag(&self) -> &str {
         &self.utility_tag
     }
@@ -165,10 +164,7 @@ impl PccUtilityManager {
         Duration::from_micros(microseconds)
     }
 
-    pub(super) fn calculate_utility(
-        &mut self,
-        interval: &MonitorInterval,
-    ) -> f64 {
+    pub(super) fn calculate_utility(&mut self, interval: &MonitorInterval) -> f64 {
         assert!(interval.first_packet_sent_time != interval.last_packet_sent_time);
         self.prepare_statistics(interval);
 
@@ -204,14 +200,27 @@ impl PccUtilityManager {
         }
 
         let latency_penalty = 1.0 - 1.0 / (1.0 + f64::exp(K_RTT_COEFFICIENT * (1.0 - rtt_ratio)));
-        let loss_penalty = 1.0 - 1.0 / (1.0 + f64::exp(K_LOSS_COEFFICIENT * (self.interval_stats.loss_rate - K_LOSS_TOLERANCE)));
-        let sending_contribution = (interval.bytes_acked as f64 * 8.0) / self.interval_stats.interval_duration * loss_penalty * latency_penalty;
-        let loss_contribution = (interval.bytes_lost as f64 * 8.0) / self.interval_stats.interval_duration;
+        let loss_penalty = 1.0
+            - 1.0
+                / (1.0
+                    + f64::exp(
+                        K_LOSS_COEFFICIENT * (self.interval_stats.loss_rate - K_LOSS_TOLERANCE),
+                    ));
+        let sending_contribution = (interval.bytes_acked as f64 * 8.0)
+            / self.interval_stats.interval_duration
+            * loss_penalty
+            * latency_penalty;
+        let loss_contribution =
+            (interval.bytes_lost as f64 * 8.0) / self.interval_stats.interval_duration;
         (sending_contribution - loss_contribution) * 1000.0
     }
 
     fn calculate_utility_vivace(&self, interval: &MonitorInterval) -> f64 {
-        self.calculate_utility_proportional(interval, K_LATENCY_COEFFICIENT, K_VIVACE_LOSS_COEFFICIENT)
+        self.calculate_utility_proportional(
+            interval,
+            K_LATENCY_COEFFICIENT,
+            K_VIVACE_LOSS_COEFFICIENT,
+        )
     }
 
     fn calculate_utility_proportional(
@@ -220,36 +229,49 @@ impl PccUtilityManager {
         latency_coeff: f64,
         loss_coeff: f64,
     ) -> f64 {
-        let sending_contribution = f64::powf(self.interval_stats.actual_sending_rate_mbps, K_SENDING_RATE_EXPONENT);
-        let rtt_gradient = if self.is_rtt_inflation_tolerable { 0.0 } else { self.interval_stats.rtt_gradient };
-        let latency_penalty = latency_coeff * rtt_gradient * self.interval_stats.actual_sending_rate_mbps;
-        let loss_penalty = loss_coeff * self.interval_stats.loss_rate * self.interval_stats.actual_sending_rate_mbps;
+        let sending_contribution = f64::powf(
+            self.interval_stats.actual_sending_rate_mbps,
+            K_SENDING_RATE_EXPONENT,
+        );
+        let rtt_gradient = if self.is_rtt_inflation_tolerable {
+            0.0
+        } else {
+            self.interval_stats.rtt_gradient
+        };
+        let latency_penalty =
+            latency_coeff * rtt_gradient * self.interval_stats.actual_sending_rate_mbps;
+        let loss_penalty = loss_coeff
+            * self.interval_stats.loss_rate
+            * self.interval_stats.actual_sending_rate_mbps;
         sending_contribution - latency_penalty - loss_penalty
     }
 
-    fn calculate_utility_scavenger(
-        &self,
-        interval: &MonitorInterval,
-        rtt_dev_coeff: f64,
-    ) -> f64 {
-        let sending_contribution = f64::powf(self.interval_stats.actual_sending_rate_mbps, K_SENDING_RATE_EXPONENT);
-        let latency_penalty = K_LATENCY_COEFFICIENT * self.interval_stats.rtt_gradient * self.interval_stats.actual_sending_rate_mbps;
-        let loss_penalty = K_VIVACE_LOSS_COEFFICIENT * self.interval_stats.loss_rate * self.interval_stats.actual_sending_rate_mbps;
-        let rtt_dev_penalty = rtt_dev_coeff * self.interval_stats.rtt_dev * self.interval_stats.actual_sending_rate_mbps;
+    fn calculate_utility_scavenger(&self, interval: &MonitorInterval, rtt_dev_coeff: f64) -> f64 {
+        let sending_contribution = f64::powf(
+            self.interval_stats.actual_sending_rate_mbps,
+            K_SENDING_RATE_EXPONENT,
+        );
+        let latency_penalty = K_LATENCY_COEFFICIENT
+            * self.interval_stats.rtt_gradient
+            * self.interval_stats.actual_sending_rate_mbps;
+        let loss_penalty = K_VIVACE_LOSS_COEFFICIENT
+            * self.interval_stats.loss_rate
+            * self.interval_stats.actual_sending_rate_mbps;
+        let rtt_dev_penalty = rtt_dev_coeff
+            * self.interval_stats.rtt_dev
+            * self.interval_stats.actual_sending_rate_mbps;
         sending_contribution - latency_penalty - loss_penalty - rtt_dev_penalty
     }
 
-    fn calculate_utility_hybrid_allegro(
-        &self,
-        interval: &MonitorInterval,
-        bound: f64,
-    ) -> f64 {
+    fn calculate_utility_hybrid_allegro(&self, interval: &MonitorInterval, bound: f64) -> f64 {
         if self.interval_stats.actual_sending_rate_mbps < bound {
             self.calculate_utility_allegro(interval)
         } else {
             let allegro_utility = self.calculate_utility_allegro(interval);
             let perfect = self.calculate_perfect_utility_allegro(bound);
-            let bounded = bound + (self.interval_stats.actual_sending_rate_mbps - bound) * K_HYBRID_UTILITY_RATE_TRANSFORM_FACTOR;
+            let bounded = bound
+                + (self.interval_stats.actual_sending_rate_mbps - bound)
+                    * K_HYBRID_UTILITY_RATE_TRANSFORM_FACTOR;
             let bounded_perfect = self.calculate_perfect_utility_allegro(bounded);
             bounded_perfect * (allegro_utility / perfect)
         }
@@ -257,7 +279,8 @@ impl PccUtilityManager {
 
     fn calculate_perfect_utility_allegro(&self, sending_rate: f64) -> f64 {
         let latency_penalty = 1.0 - 1.0 / (1.0 + f64::exp(K_RTT_COEFFICIENT * (1.0 - 1.0)));
-        let loss_penalty = 1.0 - 1.0 / (1.0 + f64::exp(K_LOSS_COEFFICIENT * (0.0 - K_LOSS_TOLERANCE)));
+        let loss_penalty =
+            1.0 - 1.0 / (1.0 + f64::exp(K_LOSS_COEFFICIENT * (0.0 - K_LOSS_TOLERANCE)));
         (sending_rate * 1e6 / 8.0) * loss_penalty * latency_penalty * 1000.0
     }
 
@@ -308,33 +331,35 @@ impl PccUtilityManager {
     pub(super) fn compute_simple_metrics(&mut self, interval: &MonitorInterval) {
         // Add the transfer time of the last packet in the monitor interval when
         // calculating monitor interval duration.
-        
+
         let transfer_time = self.transfer_time(K_MAX_PACKET_SIZE, interval.sending_rate);
-        self.interval_stats.interval_duration = ((interval.last_packet_sent_time - interval.first_packet_sent_time + transfer_time).as_micros() as f64) / 1_000_000.0;
+        self.interval_stats.interval_duration =
+            ((interval.last_packet_sent_time - interval.first_packet_sent_time + transfer_time)
+                .as_micros() as f64)
+                / 1_000_000.0;
 
-        self.interval_stats.rtt_ratio = 
-            (interval.rtt_on_monitor_start.as_micros() as f64) /
-            (interval.rtt_on_monitor_end.as_micros() as f64);
-        
-        self.interval_stats.loss_rate = 
-            (interval.bytes_lost - self.interval_stats.marked_lost_bytes) as f64 /
-            interval.bytes_sent as f64;
+        self.interval_stats.rtt_ratio = (interval.rtt_on_monitor_start.as_micros() as f64)
+            / (interval.rtt_on_monitor_end.as_micros() as f64);
 
-        self.interval_stats.actual_sending_rate_mbps = 
-            (interval.bytes_sent as f64 * K_BITS_PER_BYTE as f64) / 
-            self.interval_stats.interval_duration;
+        self.interval_stats.loss_rate = (interval.bytes_lost
+            - self.interval_stats.marked_lost_bytes) as f64
+            / interval.bytes_sent as f64;
+
+        self.interval_stats.actual_sending_rate_mbps = (interval.bytes_sent as f64
+            * K_BITS_PER_BYTE as f64)
+            / self.interval_stats.interval_duration;
 
         let num_rtt_samples = interval.packet_rtt_samples.len();
         if num_rtt_samples > 1 {
-            let ack_duration = 
-                (interval.packet_rtt_samples[num_rtt_samples - 1].ack_timestamp -
-                interval.packet_rtt_samples[0].ack_timestamp).as_micros() as f64;
+            let ack_duration = (interval.packet_rtt_samples[num_rtt_samples - 1].ack_timestamp
+                - interval.packet_rtt_samples[0].ack_timestamp)
+                .as_micros() as f64;
 
-            self.interval_stats.ack_rate_mbps = 
-                (interval.bytes_acked as f64 - K_MAX_PACKET_SIZE as f64) * 
-                K_BITS_PER_BYTE as f64 / ack_duration;
+            self.interval_stats.ack_rate_mbps =
+                (interval.bytes_acked as f64 - K_MAX_PACKET_SIZE as f64) * K_BITS_PER_BYTE as f64
+                    / ack_duration;
         } else if num_rtt_samples == 1 {
-            self.interval_stats.ack_rate_mbps = 
+            self.interval_stats.ack_rate_mbps =
                 interval.bytes_acked as f64 / self.interval_stats.interval_duration;
         } else {
             self.interval_stats.ack_rate_mbps = 0.0;
@@ -376,7 +401,8 @@ impl PccUtilityManager {
 
         let avg_first = sum_first / count_first as f64;
         let avg_second = sum_second / count_second as f64;
-        self.interval_stats.approx_rtt_gradient = 2.0 * (avg_second - avg_first) / (avg_second + avg_first);
+        self.interval_stats.approx_rtt_gradient =
+            2.0 * (avg_second - avg_first) / (avg_second + avg_first);
     }
 
     fn compute_rtt_gradient(&mut self, interval: &MonitorInterval) {
@@ -494,8 +520,10 @@ impl PccUtilityManager {
             return;
         }
 
-        self.mi_avg_rtt_history.push_back(self.interval_stats.avg_rtt);
-        self.mi_rtt_dev_history.push_back(self.interval_stats.rtt_dev);
+        self.mi_avg_rtt_history
+            .push_back(self.interval_stats.avg_rtt);
+        self.mi_rtt_dev_history
+            .push_back(self.interval_stats.rtt_dev);
 
         if self.mi_avg_rtt_history.len() > K_RTT_HISTORY_LEN {
             self.mi_avg_rtt_history.pop_front();
@@ -541,7 +569,8 @@ impl PccUtilityManager {
         let numerator = sum_xy - x_avg * sum_x;
         let denominator = sum_xx - x_avg * sum_x;
         self.interval_stats.trending_gradient = numerator / denominator;
-        self.interval_stats.trending_gradient_cut = y_avg - self.interval_stats.trending_gradient * x_avg;
+        self.interval_stats.trending_gradient_cut =
+            y_avg - self.interval_stats.trending_gradient * x_avg;
     }
 
     fn compute_trending_gradient_error(&mut self) {
@@ -554,7 +583,8 @@ impl PccUtilityManager {
         let mut error_sum = 0.0;
         for (i, &y) in samples.iter().enumerate() {
             let x = i as f64;
-            let pred = self.interval_stats.trending_gradient * x + self.interval_stats.trending_gradient_cut;
+            let pred = self.interval_stats.trending_gradient * x
+                + self.interval_stats.trending_gradient_cut;
             error_sum += (y - pred).powi(2);
         }
 
@@ -577,7 +607,8 @@ impl PccUtilityManager {
     }
 
     fn determine_tolerance_general(&mut self) {
-        self.is_rtt_inflation_tolerable = self.interval_stats.rtt_gradient_error >= self.interval_stats.rtt_gradient.abs();
+        self.is_rtt_inflation_tolerable =
+            self.interval_stats.rtt_gradient_error >= self.interval_stats.rtt_gradient.abs();
         self.is_rtt_dev_tolerable = self.is_rtt_inflation_tolerable;
     }
 
@@ -589,7 +620,9 @@ impl PccUtilityManager {
         let trending_gradient = self.interval_stats.trending_gradient;
         let trending_error = self.interval_stats.trending_gradient_error;
 
-        if self.min_trending_gradient < 1e-6 || trending_gradient.abs() < self.min_trending_gradient / K_BETA {
+        if self.min_trending_gradient < 1e-6
+            || trending_gradient.abs() < self.min_trending_gradient / K_BETA
+        {
             self.avg_trending_gradient = 0.0;
             self.min_trending_gradient = trending_gradient.abs();
             self.dev_trending_gradient = trending_gradient.abs();
@@ -611,8 +644,10 @@ impl PccUtilityManager {
                 self.is_rtt_dev_tolerable = false;
                 self.ratio_inflated_mi += K_ALPHA;
             } else {
-                self.dev_trending_gradient = self.dev_trending_gradient * (1.0 - K_ALPHA) + (trending_gradient - self.last_trending_gradient).abs() * K_ALPHA;
-                self.avg_trending_gradient = self.avg_trending_gradient * (1.0 - K_ALPHA) + trending_gradient * K_ALPHA;
+                self.dev_trending_gradient = self.dev_trending_gradient * (1.0 - K_ALPHA)
+                    + (trending_gradient - self.last_trending_gradient).abs() * K_ALPHA;
+                self.avg_trending_gradient =
+                    self.avg_trending_gradient * (1.0 - K_ALPHA) + trending_gradient * K_ALPHA;
                 self.last_trending_gradient = trending_gradient;
             }
 
@@ -633,12 +668,16 @@ impl PccUtilityManager {
             self.avg_mi_rtt_dev = self.interval_stats.rtt_dev;
             self.dev_mi_rtt_dev = 0.5 * self.interval_stats.rtt_dev;
         } else {
-            if self.interval_stats.rtt_dev > self.avg_mi_rtt_dev + 4.0 * self.dev_mi_rtt_dev && self.interval_stats.rtt_dev > 1000.0 {
+            if self.interval_stats.rtt_dev > self.avg_mi_rtt_dev + 4.0 * self.dev_mi_rtt_dev
+                && self.interval_stats.rtt_dev > 1000.0
+            {
                 self.is_rtt_dev_tolerable = false;
                 self.ratio_fluctuated_mi += K_ALPHA;
             } else {
-                self.dev_mi_rtt_dev = self.dev_mi_rtt_dev * (1.0 - K_ALPHA) + (self.interval_stats.rtt_dev - self.avg_mi_rtt_dev).abs() * K_ALPHA;
-                self.avg_mi_rtt_dev = self.avg_mi_rtt_dev * (1.0 - K_ALPHA) + self.interval_stats.rtt_dev * K_ALPHA;
+                self.dev_mi_rtt_dev = self.dev_mi_rtt_dev * (1.0 - K_ALPHA)
+                    + (self.interval_stats.rtt_dev - self.avg_mi_rtt_dev).abs() * K_ALPHA;
+                self.avg_mi_rtt_dev =
+                    self.avg_mi_rtt_dev * (1.0 - K_ALPHA) + self.interval_stats.rtt_dev * K_ALPHA;
             }
         }
 

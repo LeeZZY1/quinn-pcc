@@ -112,7 +112,7 @@ impl Default for BandwidthEstimation {
             prev_sent_time: None,
             max_filter: MinMax::default(),
             acked_at_last_window: 0,
-            latest_bw : 0,
+            latest_bw: 0,
         }
     }
 }

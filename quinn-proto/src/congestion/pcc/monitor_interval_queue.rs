@@ -97,7 +97,6 @@ pub(super) trait PccMonitorIntervalQueueDelegateInterface: Send + Sync {
 
 pub(super) struct MyDelegate;
 
-
 impl PccMonitorIntervalQueueDelegateInterface for MyDelegate {
     fn on_utility_available(&self, intervals: &[&MonitorInterval], event_time: Instant) {
         let _ = event_time;
@@ -165,8 +164,8 @@ impl PccMonitorIntervalQueue {
     /// 当前interval的包序号范围
     /// 这个方法用于检查一个包是否在指定的interval范围内
     pub(super) fn interval_contains_packet(interval: &MonitorInterval, packet_number: u64) -> bool {
-        packet_number >= interval.first_packet_number && 
-        packet_number <= interval.last_packet_number
+        packet_number >= interval.first_packet_number
+            && packet_number <= interval.last_packet_number
     }
 
     pub(super) fn num_useful_intervals(&self) -> usize {
@@ -191,7 +190,7 @@ impl PccMonitorIntervalQueue {
         interval.rtt_on_monitor_start = rtt;
         interval.rtt_on_monitor_end = rtt;
         interval.min_rtt = rtt;
-        
+
         self.monitor_intervals.push_back(interval);
     }
 
@@ -286,7 +285,8 @@ impl PccMonitorIntervalQueue {
                     });
 
                     interval.num_reliable_rtt += is_reliable as usize;
-                    interval.num_reliable_rtt_for_gradient_calculation += is_reliable_for_gradient as usize;
+                    interval.num_reliable_rtt_for_gradient_calculation +=
+                        is_reliable_for_gradient as usize;
 
                     if interval.num_reliable_rtt >= K_MIN_RELIABLE_RTT {
                         interval.has_enough_reliable_rtt = true;
@@ -321,7 +321,8 @@ impl PccMonitorIntervalQueue {
                 .iter()
                 .filter(|i| i.is_useful)
                 .collect();
-            self.my_delegate.on_utility_available(&useful_intervals, event_time);
+            self.my_delegate
+                .on_utility_available(&useful_intervals, event_time);
         }
 
         // Remove processed intervals
@@ -341,7 +342,7 @@ impl PccMonitorIntervalQueue {
         pending_rtt: Duration,
         avg_interval_ratio: &mut f64,
         burst_flag: &mut bool,
-        pending_avg_rtt: Duration, 
+        pending_avg_rtt: Duration,
     ) -> bool {
         if pending_ack_interval.is_zero() {
             return false;
@@ -373,10 +374,9 @@ impl PccMonitorIntervalQueue {
     }
 
     fn is_utility_available(interval: &MonitorInterval) -> bool {
-        interval.has_enough_reliable_rtt && 
-        (interval.bytes_acked + interval.bytes_lost) == interval.bytes_sent
+        interval.has_enough_reliable_rtt
+            && (interval.bytes_acked + interval.bytes_lost) == interval.bytes_sent
     }
-
 
     fn has_invalid_utility(interval: &MonitorInterval) -> bool {
         interval.first_packet_sent_time == interval.last_packet_sent_time

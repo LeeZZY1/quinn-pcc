@@ -1,14 +1,17 @@
-use std::any::Any;
-use std::collections::VecDeque;
-use std::sync::Arc;
 use super::{Controller, ControllerFactory, BASE_DATAGRAM_SIZE};
 use crate::connection::RttEstimator;
 use crate::Duration;
+use std::any::Any;
+use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Instant;
 // Define or import the missing types
 
 mod monitor_interval_queue;
-use monitor_interval_queue::{MonitorInterval, PccMonitorIntervalQueue, MyDelegate, PccMonitorIntervalQueueDelegateInterface, AckedPacket};
+use monitor_interval_queue::{
+    AckedPacket, MonitorInterval, MyDelegate, PccMonitorIntervalQueue,
+    PccMonitorIntervalQueueDelegateInterface,
+};
 mod utility_manager;
 use utility_manager::PccUtilityManager;
 
@@ -16,7 +19,7 @@ const K_INITIAL_RTT: f64 = 0.1; // seconds
 const K_MEGABIT: u64 = 1024 * 1024;
 const K_DECISION_MADE_STEP_SIZE: f64 = 0.02;
 const K_PROBING_STEP_SIZE: f64 = 0.05;
-const K_MAX_DECISION_MADE_STEP_SIZE : f64 = 0.1;
+const K_MAX_DECISION_MADE_STEP_SIZE: f64 = 0.1;
 const K_UTILITY_GRADIENT_TO_RATE_CHANGE_FACTOR: f64 = 1.0;
 const K_RATE_CHANGE_AMPLIFY_EXPONENT: f64 = 1.2;
 const FLAGS_RESTORE_CENTRAL_RATE_UPON_APP_LIMITED: bool = false;
@@ -27,17 +30,16 @@ const K_MIN_SENDING_RATE: u64 = 500 * 1024; // bits per second
 const K_MIN_RELIABILITY_RATIO: f64 = 0.8;
 
 const FLAGS_ENABLE_RTT_DEVIATION_BASED_EARLY_TERMINATION: bool = true;
-const FLAGS_TRIGGER_EARLY_TERMINATION_BASED_ON_INTERVAL_QUEUE_FRONT: bool =  false;
-const FLAGS_ENABLE_EARLY_TERMINATION_BASED_ON_LATEST_RTT_TREND: bool =  false;
-const  FLAGS_MAX_RTT_FLUCTUATION_TOLERANCE_RATIO_IN_STARTING: f64 = 100.0;
-const  FLAGS_MAX_RTT_FLUCTUATION_TOLERANCE_RATIO_IN_DECISION_MADE: f64 =  1.0;
-const  FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_STARTING: f64 =  2.5;
-const  FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_DECISION_MADE: f64 =  1.5;
-const  FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_PROBING: f64 =  1.0;
+const FLAGS_TRIGGER_EARLY_TERMINATION_BASED_ON_INTERVAL_QUEUE_FRONT: bool = false;
+const FLAGS_ENABLE_EARLY_TERMINATION_BASED_ON_LATEST_RTT_TREND: bool = false;
+const FLAGS_MAX_RTT_FLUCTUATION_TOLERANCE_RATIO_IN_STARTING: f64 = 100.0;
+const FLAGS_MAX_RTT_FLUCTUATION_TOLERANCE_RATIO_IN_DECISION_MADE: f64 = 1.0;
+const FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_STARTING: f64 = 2.5;
+const FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_DECISION_MADE: f64 = 1.5;
+const FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_PROBING: f64 = 1.0;
 // const  FLAGS_CAN_SEND_RESPECT_CONGESTION_WINDOW: bool =  true;
 // const  FLAGS_BYTES_IN_FLIGHT_GAIN: f64 =  2.5;
 // const  FLAGS_EXIT_STARTING_BASED_ON_SAMPLED_BANDWIDTH: bool =  false;
-
 
 /// PccVivace State Variables.
 ///
@@ -129,15 +131,13 @@ pub struct PccVivace {
     largest_packet_num_acked: Option<u64>,
 }
 
-
-
 impl PccVivace {
     /// 创建新的 PccVivace 实例
     pub fn new(config: Arc<PccVivaceConfig>, _now: Instant, current_mtu: u16) -> Self {
         let initial_window: u64 = config.initial_congestion_window;
         let delegate: Arc<dyn PccMonitorIntervalQueueDelegateInterface> = Arc::new(MyDelegate);
         let monitor_queue = PccMonitorIntervalQueue::new(delegate.clone());
-        
+
         Self {
             config,
             current_mtu: current_mtu as u64,
@@ -199,11 +199,11 @@ impl PccVivace {
         } else {
             return false;
         }
-    
+
         // 如果当前有用间隔没有足够的 RTT 数据或者持续时间没有超过监控时间，不创建新的间隔
         if let Some(interval) = current_interval {
-            if !interval.has_enough_reliable_rtt ||
-                event_time - interval.first_packet_sent_time < self.monitor_duration
+            if !interval.has_enough_reliable_rtt
+                || event_time - interval.first_packet_sent_time < self.monitor_duration
             {
                 return false;
             }
@@ -214,7 +214,7 @@ impl PccVivace {
         if let Some(current_interval) = self.monitor_queue.current() {
             let reliability_ratio = current_interval.num_reliable_rtt as f64
                 / current_interval.packet_rtt_samples.len() as f64;
-        
+
             if reliability_ratio > K_MIN_RELIABILITY_RATIO {
                 return true;
             } else if current_interval.is_monitor_duration_extended {
@@ -228,7 +228,6 @@ impl PccVivace {
             // current_interval 是 None，不创建新的间隔
             return false;
         }
-        
     }
 
     fn maybe_set_sending_rate(&mut self) {
@@ -240,11 +239,11 @@ impl PccVivace {
         {
             return;
         }
-    
+
         if self.monitor_queue.num_useful_intervals() != 0 {
             // 恢复中心发送速率
             self.restore_central_sending_rate();
-    
+
             if self.monitor_queue.num_useful_intervals()
                 == 2 * self.get_num_interval_groups_in_probing()
             {
@@ -252,7 +251,7 @@ impl PccVivace {
                 return;
             }
         }
-    
+
         // 构建多个监测组，每组包含一个 INCREASE 和一个 DECREASE
         if self.monitor_queue.num_useful_intervals() % 2 == 0 {
             self.direction = if rand::random::<bool>() {
@@ -266,7 +265,7 @@ impl PccVivace {
                 Direction::Decrease => Direction::Increase,
             };
         }
-    
+
         if self.direction == Direction::Increase {
             self.sending_rate *= 1.0 + K_PROBING_STEP_SIZE;
         } else {
@@ -290,9 +289,13 @@ impl PccVivace {
                     if current.is_useful {
                         // 执行恢复 central 发送速率的逻辑
                         if self.direction == Direction::Increase {
-                            self.sending_rate = ((self.sending_rate as f64 * (1.0 / (1.0 + K_PROBING_STEP_SIZE))) as u64) as f64;
+                            self.sending_rate = ((self.sending_rate as f64
+                                * (1.0 / (1.0 + K_PROBING_STEP_SIZE)))
+                                as u64) as f64;
                         } else {
-                            self.sending_rate = ((self.sending_rate as f64 * (1.0 / (1.0 - K_PROBING_STEP_SIZE))) as u64) as f64;
+                            self.sending_rate = ((self.sending_rate as f64
+                                * (1.0 / (1.0 - K_PROBING_STEP_SIZE)))
+                                as u64) as f64;
                         }
                     }
                 }
@@ -303,9 +306,11 @@ impl PccVivace {
                     K_MAX_DECISION_MADE_STEP_SIZE,
                 );
                 if self.direction == Direction::Increase {
-                    self.sending_rate = ((self.sending_rate as f64 * (1.0 / (1.0 + step))) as u64) as f64;
+                    self.sending_rate =
+                        ((self.sending_rate as f64 * (1.0 / (1.0 + step))) as u64) as f64;
                 } else {
-                    self.sending_rate = ((self.sending_rate as f64 * (1.0 / (1.0 - step))) as u64) as f64;
+                    self.sending_rate =
+                        ((self.sending_rate as f64 * (1.0 / (1.0 - step))) as u64) as f64;
                 }
             }
         }
@@ -318,10 +323,10 @@ impl PccVivace {
     /// 4. 如果当前模式是 DecisionMade，则将 rounds 设置为 1
     /// 5. 如果效用标签是 Hybrid，则设置有效的效用标签
     fn enter_probing(&mut self) {
-    //     self.mode = Mode::Probing;
-    //     self.rounds = 1;
-    //     self.incremental_rate_change_step_allowance = 0;
-    //     self.sending_rate = cmp::max(self.sending_rate, K_MIN_SENDING_RATE);
+        //     self.mode = Mode::Probing;
+        //     self.rounds = 1;
+        //     self.incremental_rate_change_step_allowance = 0;
+        //     self.sending_rate = cmp::max(self.sending_rate, K_MIN_SENDING_RATE);
 
         match self.mode {
             Mode::Starting => {
@@ -357,7 +362,7 @@ impl PccVivace {
         //     let mut effective_utility_tag = "Hybrid".to_string();
 
         //     let higher_probing_rate_mbps = (self.sending_rate as f64 * (1.0 + K_PROBING_STEP_SIZE)).to_bps() as f64 / K_MEGABIT as f64;
- 
+
         //     // 从 utility 参数里取出浮点数
         //     let hybrid_switching_rate_mbps: f64 =
         //         self.utility_manager.get_utility_parameter(0).into();
@@ -385,29 +390,29 @@ impl PccVivace {
         if utility_info.len() < 2 * self.get_num_interval_groups_in_probing() {
             return false;
         }
-    
+
         let mut increase = false;
-    
+
         for i in 0..self.get_num_interval_groups_in_probing() {
             let a = &utility_info[2 * i];
             let b = &utility_info[2 * i + 1];
-    
+
             let increase_i = if a.utility > b.utility {
                 a.sending_rate > b.sending_rate
             } else {
                 a.sending_rate < b.sending_rate
             };
-    
+
             if i == 0 {
                 increase = increase_i;
             }
-    
+
             // 如果有不一致的判断，不能做决策
             if increase_i != increase {
                 return false;
             }
         }
-    
+
         true
     }
 
@@ -474,7 +479,7 @@ impl PccVivace {
             assert!(self.mode == Mode::Starting);
             return false;
         }
-    
+
         // STARTING 和 DECISION_MADE 模式下最多允许一个 useful interval
         // PROBING 模式下最多允许 2 * 组数个 useful interval
         let max_useful = if self.mode == Mode::Probing {
@@ -482,7 +487,7 @@ impl PccVivace {
         } else {
             1
         };
-    
+
         self.monitor_queue.num_useful_intervals() < max_useful
     }
 
@@ -492,7 +497,7 @@ impl PccVivace {
             Mode::Starting => FLAGS_MAX_RTT_FLUCTUATION_TOLERANCE_RATIO_IN_STARTING,
             _ => FLAGS_MAX_RTT_FLUCTUATION_TOLERANCE_RATIO_IN_DECISION_MADE,
         };
-    
+
         // 2. 如果启用了 RTT 偏差控制
         if FLAGS_ENABLE_RTT_DEVIATION_BASED_EARLY_TERMINATION {
             let tolerance_gain = match self.mode {
@@ -500,22 +505,20 @@ impl PccVivace {
                 Mode::Probing => FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_PROBING,
                 Mode::DecisionMade => FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_DECISION_MADE,
             };
-    
+
             let rtt_dev_us = self.rtt_deviation.as_micros() as f64;
             let avg_rtt_us = if self.avg_rtt.is_zero() {
                 K_INITIAL_RTT as f64
             } else {
                 self.avg_rtt.as_micros() as f64
             };
-    
+
             let dynamic_ratio = tolerance_gain * rtt_dev_us / avg_rtt_us;
             tolerance_ratio = tolerance_ratio.min(dynamic_ratio);
         }
-    
+
         tolerance_ratio
     }
-    
-    
 
     /// 计算速率变化
     /// 参数：效用信息utility_info
@@ -531,13 +534,9 @@ impl PccVivace {
         let mut delta_utility = 0.0;
 
         if self.mode == Mode::Probing {
-            delta_sending_rate = f64::max(
-                utility_info[0].sending_rate,
-                utility_info[1].sending_rate,
-            ) - f64::min(
-                utility_info[0].sending_rate,
-                utility_info[1].sending_rate,
-            );
+            delta_sending_rate =
+                f64::max(utility_info[0].sending_rate, utility_info[1].sending_rate)
+                    - f64::min(utility_info[0].sending_rate, utility_info[1].sending_rate);
 
             for i in 0..self.get_num_interval_groups_in_probing() {
                 let increase_i = if utility_info[2 * i].utility > utility_info[2 * i + 1].utility {
@@ -552,8 +551,9 @@ impl PccVivace {
                     continue;
                 }
 
-                delta_utility += f64::max(utility_info[2 * i].utility, utility_info[2 * i + 1].utility)
-                    - f64::min(utility_info[2 * i].utility, utility_info[2 * i + 1].utility);
+                delta_utility +=
+                    f64::max(utility_info[2 * i].utility, utility_info[2 * i + 1].utility)
+                        - f64::min(utility_info[2 * i].utility, utility_info[2 * i + 1].utility);
             }
             delta_utility /= self.get_num_interval_groups_in_probing() as f64;
         } else {
@@ -585,9 +585,10 @@ impl PccVivace {
             self.incremental_rate_change_step_allowance = 0;
         }
 
-        let max_allowed_rate_change = self.sending_rate
-            as f64 * (K_INITIAL_MAX_STEP_SIZE + K_INCREMENTAL_STEP_SIZE * self.incremental_rate_change_step_allowance as f64);
-        
+        let max_allowed_rate_change = self.sending_rate as f64
+            * (K_INITIAL_MAX_STEP_SIZE
+                + K_INCREMENTAL_STEP_SIZE * self.incremental_rate_change_step_allowance as f64);
+
         if rate_change > max_allowed_rate_change {
             rate_change = max_allowed_rate_change;
             self.incremental_rate_change_step_allowance += 1;
@@ -629,7 +630,6 @@ impl PccVivace {
         if self.direction == Direction::Increase {
             // self.sending_rate += rate_change as f64;
             self.sending_rate = self.sending_rate + rate_change as f64;
-
         } else {
             self.sending_rate = f64::max(self.sending_rate - rate_change, 0.0);
         }
@@ -643,11 +643,15 @@ impl PccVivace {
             self.mode = Mode::DecisionMade;
         }
     }
-    
+
     /// 处理可用的效用
     /// 参数：可用的效用信息useful_intervals，事件时间event_time
-    /// 
-    pub fn on_utility_available(&mut self, useful_intervals: &[&MonitorInterval], _event_time: Instant) {
+    ///
+    pub fn on_utility_available(
+        &mut self,
+        useful_intervals: &[&MonitorInterval],
+        _event_time: Instant,
+    ) {
         // 计算所有可用间隔（useful_intervals）的 utility（效用），
         // 并将这些效用信息存储在 utility_info 向量中
         let mut utility_info = Vec::new();
@@ -684,7 +688,9 @@ impl PccVivace {
             Mode::Probing => {
                 if self.can_make_decision(&utility_info) {
                     // 如果在本轮探测中没有非有用间隔，发送者需要将发送速率_改回中心速率。
-                    if FLAGS_RESTORE_CENTRAL_RATE_UPON_APP_LIMITED && self.monitor_queue.current().unwrap().is_useful {
+                    if FLAGS_RESTORE_CENTRAL_RATE_UPON_APP_LIMITED
+                        && self.monitor_queue.current().unwrap().is_useful
+                    {
                         self.restore_central_sending_rate();
                     }
                     assert!(utility_info.len() == 2 * self.get_num_interval_groups_in_probing());
@@ -695,7 +701,9 @@ impl PccVivace {
                 } else {
                     self.enter_probing();
                 }
-                if (self.rounds > 1 || self.mode == Mode::DecisionMade) && self.sending_rate <= K_MIN_SENDING_RATE as f64 {
+                if (self.rounds > 1 || self.mode == Mode::DecisionMade)
+                    && self.sending_rate <= K_MIN_SENDING_RATE as f64
+                {
                     self.sending_rate = K_MIN_SENDING_RATE as f64;
                     self.incremental_rate_change_step_allowance = 0;
                     self.rounds = 1;
@@ -709,18 +717,18 @@ impl PccVivace {
             // 3. 否则，进入探测模式
             Mode::DecisionMade => {
                 assert!(utility_info.len() == 1);
-                let condition = (self.direction == Direction::Increase &&
-                                 utility_info[0].utility > self.latest_utility_info.utility &&
-                                 utility_info[0].sending_rate > self.latest_utility_info.sending_rate) ||
-                                (self.direction == Direction::Increase &&
-                                 utility_info[0].utility < self.latest_utility_info.utility &&
-                                 utility_info[0].sending_rate < self.latest_utility_info.sending_rate) ||
-                                (self.direction == Direction::Decrease &&
-                                 utility_info[0].utility > self.latest_utility_info.utility &&
-                                 utility_info[0].sending_rate < self.latest_utility_info.sending_rate) ||
-                                (self.direction == Direction::Decrease &&
-                                 utility_info[0].utility < self.latest_utility_info.utility &&
-                                 utility_info[0].sending_rate > self.latest_utility_info.sending_rate);
+                let condition = (self.direction == Direction::Increase
+                    && utility_info[0].utility > self.latest_utility_info.utility
+                    && utility_info[0].sending_rate > self.latest_utility_info.sending_rate)
+                    || (self.direction == Direction::Increase
+                        && utility_info[0].utility < self.latest_utility_info.utility
+                        && utility_info[0].sending_rate < self.latest_utility_info.sending_rate)
+                    || (self.direction == Direction::Decrease
+                        && utility_info[0].utility > self.latest_utility_info.utility
+                        && utility_info[0].sending_rate < self.latest_utility_info.sending_rate)
+                    || (self.direction == Direction::Decrease
+                        && utility_info[0].utility < self.latest_utility_info.utility
+                        && utility_info[0].sending_rate > self.latest_utility_info.sending_rate);
                 if condition {
                     self.enter_decision_made(&utility_info);
                     self.latest_utility_info = utility_info[0].clone();
@@ -731,7 +739,7 @@ impl PccVivace {
         }
     }
 
-    fn update_rtt(&mut self, event_time: Instant, rtt: &RttEstimator,) {
+    fn update_rtt(&mut self, event_time: Instant, rtt: &RttEstimator) {
         eprint!("enter fn update_rtt");
         // 参考pccsender中的update_rtt函数
         let rtt_value = rtt.latest();
@@ -746,7 +754,11 @@ impl PccVivace {
             let avg_rtt_microseconds = self.avg_rtt.as_micros();
             let rtt_microseconds = rtt_value.as_micros();
             self.rtt_deviation = (self.rtt_deviation * 3 / 4)
-                + Duration::from_micros((((avg_rtt_microseconds as i128 - rtt_microseconds as i128).abs() as u128) / 4).try_into().unwrap());
+                + Duration::from_micros(
+                    (((avg_rtt_microseconds as i128 - rtt_microseconds as i128).abs() as u128) / 4)
+                        .try_into()
+                        .unwrap(),
+                );
         }
 
         // 更新 min_rtt_deviation_
@@ -758,7 +770,9 @@ impl PccVivace {
         self.avg_rtt = if self.avg_rtt.is_zero() {
             rtt_value
         } else {
-            Duration::from_secs_f64(self.avg_rtt.as_secs_f64() * 0.875 + rtt_value.as_secs_f64() * 0.125)
+            Duration::from_secs_f64(
+                self.avg_rtt.as_secs_f64() * 0.875 + rtt_value.as_secs_f64() * 0.125,
+            )
         };
         eprint!("avg_rtt: {:?}", self.avg_rtt);
 
@@ -766,7 +780,7 @@ impl PccVivace {
         if self.min_rtt.is_zero() || rtt_value < self.min_rtt {
             self.min_rtt = rtt_value;
         }
-        
+
         eprint!("min_rtt: {:?}", self.min_rtt);
 
         // 更新最新 ACK 时间
@@ -778,7 +792,10 @@ impl PccVivace {
     pub fn check_for_rtt_inflation(&mut self) -> bool {
         // 如果队列为空、没有 RTT 数据、或者当前 RTT 没有超过平均 RTT，直接返回 false
         if self.monitor_queue.is_empty()
-            || self.monitor_queue.front().map_or(true, |f| f.rtt_on_monitor_start.is_zero())
+            || self
+                .monitor_queue
+                .front()
+                .map_or(true, |f| f.rtt_on_monitor_start.is_zero())
             || self.latest_rtt <= self.avg_rtt
         {
             self.rtt_on_inflation_start = Some(Duration::from_micros(0));
@@ -786,7 +803,10 @@ impl PccVivace {
         }
 
         // 如果是第一次发生膨胀，记录 avg_rtt_
-        if self.rtt_on_inflation_start.map_or(true, |rtt| rtt.is_zero()) {
+        if self
+            .rtt_on_inflation_start
+            .map_or(true, |rtt| rtt.is_zero())
+        {
             self.rtt_on_inflation_start = Some(self.avg_rtt);
         }
 
@@ -794,16 +814,27 @@ impl PccVivace {
         let max_inflation_ratio = 1.0 + self.get_max_rtt_fluctuation_tolerance();
 
         // 获取参考 RTT
-        let rtt_on_monitor_start = if FLAGS_TRIGGER_EARLY_TERMINATION_BASED_ON_INTERVAL_QUEUE_FRONT {
-            self.monitor_queue.front().map_or(Duration::from_micros(0), |f| f.rtt_on_monitor_start)
+        let rtt_on_monitor_start = if FLAGS_TRIGGER_EARLY_TERMINATION_BASED_ON_INTERVAL_QUEUE_FRONT
+        {
+            self.monitor_queue
+                .front()
+                .map_or(Duration::from_micros(0), |f| f.rtt_on_monitor_start)
         } else {
-            self.monitor_queue.current().map_or(Duration::from_micros(0), |c| c.rtt_on_monitor_start)
+            self.monitor_queue
+                .current()
+                .map_or(Duration::from_micros(0), |c| c.rtt_on_monitor_start)
         };
 
-        let inflated = max_inflation_ratio * rtt_on_monitor_start.as_secs_f64() < self.avg_rtt.as_secs_f64();
+        let inflated =
+            max_inflation_ratio * rtt_on_monitor_start.as_secs_f64() < self.avg_rtt.as_secs_f64();
 
-        let is_inflated = if !inflated && FLAGS_ENABLE_EARLY_TERMINATION_BASED_ON_LATEST_RTT_TREND{
-            max_inflation_ratio * self.rtt_on_inflation_start.unwrap_or(Duration::ZERO).as_secs_f64() < self.avg_rtt.as_secs_f64()
+        let is_inflated = if !inflated && FLAGS_ENABLE_EARLY_TERMINATION_BASED_ON_LATEST_RTT_TREND {
+            max_inflation_ratio
+                * self
+                    .rtt_on_inflation_start
+                    .unwrap_or(Duration::ZERO)
+                    .as_secs_f64()
+                < self.avg_rtt.as_secs_f64()
         } else {
             inflated
         };
@@ -814,16 +845,10 @@ impl PccVivace {
 
         is_inflated
     }
-
 }
 
 impl Controller for PccVivace {
-    fn on_sent(
-        &mut self,
-        now: Instant,
-        bytes: u64,
-        packet_number: u64,
-    ) {
+    fn on_sent(&mut self, now: Instant, bytes: u64, packet_number: u64) {
         // 初始化连接开始时间
         if self.conn_start_time.is_none() {
             self.conn_start_time = Some(now);
@@ -838,7 +863,11 @@ impl Controller for PccVivace {
 
             let is_useful = self.create_useful_interval();
             self.monitor_queue.enqueue_new_monitor_interval(
-                if is_useful { self.sending_rate as u64 } else { self.get_sending_rate_for_non_useful_interval() as u64 },
+                if is_useful {
+                    self.sending_rate as u64
+                } else {
+                    self.get_sending_rate_for_non_useful_interval() as u64
+                },
                 is_useful,
                 self.get_max_rtt_fluctuation_tolerance(),
                 self.avg_rtt,
@@ -864,13 +893,12 @@ impl Controller for PccVivace {
         _app_limited: bool,
         rtt: &RttEstimator,
     ) {
-        
         // 更新最新 ACK 时间
         self.update_rtt(now, rtt);
 
         self.ack_packets.push_back(AckedPacket {
             packet_number: self.largest_packet_num_acked.unwrap_or(0) + bytes,
-            bytes_acked: bytes,// or event_time
+            bytes_acked: bytes, // or event_time
         });
 
         // 拆分oncongestionevent函数的一部分出来
@@ -886,19 +914,20 @@ impl Controller for PccVivace {
                 self.sending_rate *= gain;
             }
         }
-        eprint!("on_ack: now={:?}, bytes={}, rtt={:?}", now, bytes, self.latest_rtt);
+        eprint!(
+            "on_ack: now={:?}, bytes={}, rtt={:?}",
+            now, bytes, self.latest_rtt
+        );
     }
 
     fn on_end_acks(
-            &mut self,
-            _now: Instant,
-            _in_flight: u64,
-            _app_limited: bool,
-            largest_packet_num_acked: Option<u64>,
-        ) {
-        
+        &mut self,
+        _now: Instant,
+        _in_flight: u64,
+        _app_limited: bool,
+        largest_packet_num_acked: Option<u64>,
+    ) {
         self.largest_packet_num_acked = largest_packet_num_acked;
-        
     }
 
     fn on_congestion_event(
@@ -908,18 +937,18 @@ impl Controller for PccVivace {
         _is_persistent_congestion: bool,
         lost_bytes: u64,
     ) {
-       // 初始化 latest_ack_timestamp
+        // 初始化 latest_ack_timestamp
         // if self.latest_ack_timestamp == Instant::now() {
         //     self.latest_ack_timestamp = now;
         // }
 
         // let mut ack_interval = Duration::from_micros(0);
-        
+
         // if self.rtt_updated {
         //     ack_interval = now.duration_since(self.latest_ack_timestamp);
         //     // self.update_rtt(now, rtt);
         // }
-        
+
         // let avg_rtt = self.avg_rtt;
 
         // if !self.has_seen_valid_rtt {
@@ -953,23 +982,25 @@ impl Controller for PccVivace {
             now,
             ack_interval,
         );
-        eprint!("on_congestion_event: now={:?}, lost_bytes={}, avg_rtt={:?}, min_rtt={:?}", now, lost_bytes, avg_rtt, self.min_rtt);
+        eprint!(
+            "on_congestion_event: now={:?}, lost_bytes={}, avg_rtt={:?}, min_rtt={:?}",
+            now, lost_bytes, avg_rtt, self.min_rtt
+        );
     }
 
-    fn on_mtu_update(&mut self, _new_mtu: u16) {
-        
-    }
+    fn on_mtu_update(&mut self, _new_mtu: u16) {}
 
     fn window(&self) -> u64 {
-        let window = self.get_sending_rate_for_non_useful_interval() as u64 * if self.min_rtt.is_zero() {
-            K_INITIAL_RTT as u64
-        } else {
-            self.min_rtt.as_secs() as u64
-        };
+        let window = self.get_sending_rate_for_non_useful_interval() as u64
+            * if self.min_rtt.is_zero() {
+                K_INITIAL_RTT as u64
+            } else {
+                self.min_rtt.as_secs() as u64
+            };
         // return 10000000;
         // self.congestion_window as u64;
         eprint!("get congestion window size: {:?}", window);
-        return window
+        return window;
     }
 
     fn clone_box(&self) -> Box<dyn Controller> {
@@ -983,7 +1014,7 @@ impl Controller for PccVivace {
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
-    fn pacing_window(&self) -> u64{
+    fn pacing_window(&self) -> u64 {
         0
     }
 }
@@ -1001,12 +1032,13 @@ impl PccVivaceConfig {
         self.initial_congestion_window = value;
         self
     }
-    
 }
 
 impl Default for PccVivaceConfig {
     fn default() -> Self {
-        Self { initial_congestion_window: K_MAX_INITIAL_CONGESTION_WINDOW * BASE_DATAGRAM_SIZE } 
+        Self {
+            initial_congestion_window: K_MAX_INITIAL_CONGESTION_WINDOW * BASE_DATAGRAM_SIZE,
+        }
     }
 }
 

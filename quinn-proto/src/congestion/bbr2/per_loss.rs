@@ -32,9 +32,7 @@ use super::*;
 // pub fn bbr2_update_on_loss(
 //     r: &mut Bbr, packet: &Sent, lost_bytes: usize, now: Instant,
 // )
-pub fn bbr2_update_on_loss(
-    r: &mut Bbr2, lost_bytes: usize, now: Instant,
-) {
+pub fn bbr2_update_on_loss(r: &mut Bbr2, lost_bytes: usize, now: Instant) {
     bbr2_handle_lost_packet(r, lost_bytes, now);
 }
 
@@ -77,9 +75,7 @@ fn bbr2_handle_inflight_too_high(r: &mut Bbr2, now: Instant) {
 // fn bbr2_handle_lost_packet(
 //     r: &mut Congestion, packet: &Sent, lost_bytes: usize, now: Instant,
 // )
-fn bbr2_handle_lost_packet(
-    r: &mut Bbr2, lost_bytes: usize, now: Instant,
-) {
+fn bbr2_handle_lost_packet(r: &mut Bbr2, lost_bytes: usize, now: Instant) {
     if !r.bbr2_state.bw_probe_samples {
         return;
     }
@@ -104,8 +100,7 @@ fn bbr2_inflight_hi_from_lost_packet(r: &mut Bbr2) -> usize {
     let size = 0;
     let inflight_prev = r.bbr2_state.tx_in_flight - size;
     let lost_prev = r.bbr2_state.lost - size;
-    let lost_prefix = (LOSS_THRESH * inflight_prev as f64 - lost_prev as f64) /
-        (1.0 - LOSS_THRESH);
+    let lost_prefix = (LOSS_THRESH * inflight_prev as f64 - lost_prev as f64) / (1.0 - LOSS_THRESH);
 
     inflight_prev + lost_prefix as usize
 }
@@ -228,7 +223,7 @@ pub fn bbr2_bound_bw_for_model(r: &mut Bbr2) {
 fn bbr2_is_probing_bw(r: &mut Bbr2) -> bool {
     let state = r.bbr2_state.state;
 
-    state == BBR2StateMachine::Startup ||
-        state == BBR2StateMachine::ProbeBWREFILL ||
-        state == BBR2StateMachine::ProbeBWUP
+    state == BBR2StateMachine::Startup
+        || state == BBR2StateMachine::ProbeBWREFILL
+        || state == BBR2StateMachine::ProbeBWUP
 }

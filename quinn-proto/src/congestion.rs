@@ -6,20 +6,20 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod bbr;
+mod bbr2;
 mod cubic;
 mod new_reno;
-mod bbr2;
 mod pcc;
 
 pub use bbr::{Bbr, BbrConfig};
+pub use bbr2::{Bbr2, BbrConfig2};
 pub use cubic::{Cubic, CubicConfig};
 pub use new_reno::{NewReno, NewRenoConfig};
-pub use  bbr2::{Bbr2, BbrConfig2};
 pub use pcc::{PccVivace, PccVivaceConfig};
 /// Common interface for different congestion controllers
 pub trait Controller: Send + Sync {
     /// One or more packets were just sent
-    /// 
+    ///
     /// 属性宏，用于抑制编译器关于未使用变量的警告
     /// 参数：当前时间now，发送的字节数bytes，最后一个数据包的序号last_packet_number
     /// 有默认行为
@@ -40,7 +40,6 @@ pub trait Controller: Send + Sync {
         app_limited: bool,
         rtt: &RttEstimator,
     ) {
-
     }
 
     /// Packets are acked in batches, all with the same `now` argument. This indicates one of those batches has completed.
