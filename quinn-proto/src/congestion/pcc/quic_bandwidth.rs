@@ -13,31 +13,40 @@ pub struct QuicBandwidth {
 }
 
 impl QuicBandwidth {
+    /// 常量定义
     pub const ZERO: Self = QuicBandwidth { bits_per_second: 0 };
+    /// 无穷大带宽
     pub const INFINITE: Self = QuicBandwidth { bits_per_second: u64::MAX };
 
+    /// 创建一个新的QuicBandwidth实例，确保bits_per_second非负
+    /// 通过new函数创建QuicBandwidth实例，传入参数单位为bps
     pub fn new(bits_per_second: u64) -> Self {
         QuicBandwidth {
             bits_per_second: bits_per_second.max(0),  // 确保非负
         }
     }
-
+    /// 创建一个新的QuicBandwidth实例，确保bits_per_second非负
+    /// 通过from函数创建QuicBandwidth实例，传入参数单位为bps
     pub fn from_bits_per_second(bits_per_second: u64) -> Self {
         Self::new(bits_per_second)
     }
-
+    
+    /// 传入参数单位为kbps
     pub fn from_k_bits_per_second(k_bits_per_second: u64) -> Self {
         Self::new(k_bits_per_second * 1000)
     }
 
+    /// 传入参数单位为Bps
     pub fn from_bytes_per_second(bytes_per_second: u64) -> Self {
         Self::new(bytes_per_second * 8)
     }
 
+    /// 传入参数单位为KBps
     pub fn from_k_bytes_per_second(k_bytes_per_second: u64) -> Self {
         Self::new(k_bytes_per_second * 8000)
     }
 
+    /// 传入参数单位为Byte和时间间隔
     pub fn from_bytes_and_time_delta(bytes: QuicByteCount, delta: &Duration) -> Self {
         let microseconds = delta.as_micros();
         if microseconds == 0 {
@@ -48,22 +57,27 @@ impl QuicBandwidth {
         }
     }
 
+    /// 转换为bps单位
     pub fn to_bits_per_second(&self) -> u64 {
         self.bits_per_second
     }
 
+    /// 转换为kbps单位，传入参数为bps
     pub fn to_k_bits_per_second(&self) -> u64 {
         self.bits_per_second / 1000
     }
 
+    /// 转换为Bps单位，传入参数为bps
     pub fn to_bytes_per_second(&self) -> u64 {
         self.bits_per_second / 8
     }
 
+    /// 转换为KBps单位，传入参数为bps
     pub fn to_k_bytes_per_second(&self) -> u64 {
         self.bits_per_second / 8000
     }
 
+    /// 转换为字节数，传入参数为时间间隔
     pub fn to_bytes_per_period(&self, time_period: &Duration) -> QuicByteCount {
         let bytes_per_second = self.to_bytes_per_second() as u64;
         let microseconds = time_period.as_micros() as u64;
@@ -80,6 +94,12 @@ impl QuicBandwidth {
         self.bits_per_second == 0
     }
 
+    /// 计算传输时间
+    /// 传入参数为字节数
+    /// 返回值为Duration类型
+    /// 计算公式为：传输时间 = (字节数 * 8 * 1000000) / 带宽
+    /// 传输时间单位为微秒
+    /// 传输时间 = (字节数 * 8) / 带宽
     pub fn transfer_time(&self, bytes: QuicByteCount) -> Duration {
         if self.is_zero() {
             Duration::ZERO
