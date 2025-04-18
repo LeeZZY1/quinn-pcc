@@ -2,11 +2,16 @@ use std::collections::{LinkedList, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+// use crate::congestion::pcc::quic_time::Delta;  
+// use crate::congestion::pcc::quic_time::QuicTime;
+use crate::congestion::pcc::quic_type::{AckedPacket, QuicByteCount, QuicPacketNumber};  // 引入QuicByteCount类型,QuicByteCount在quic_types.rs中定义为u64
+use crate::congestion::pcc::quic_bandwidth::QuicBandwidth;  // 引入QuicBandwidth类型,QuicBandwidth在quic_bandwidth.rs中定义
+
 const K_MIN_RELIABLE_RTT: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct PacketRttSample {
-    pub packet_number: u64,
+    pub packet_number: QuicPacketNumber,
     pub sample_rtt: Duration,
     pub ack_timestamp: Instant,
     pub is_reliable: bool,
@@ -27,8 +32,8 @@ impl Default for PacketRttSample {
 
 #[derive(Debug, Clone)]
 pub struct LostPacketSample {
-    pub packet_number: u64,
-    pub bytes: u64,
+    pub packet_number: QuicPacketNumber,
+    pub bytes: QuicByteCount,
 }
 
 impl Default for LostPacketSample {
@@ -42,13 +47,13 @@ impl Default for LostPacketSample {
 
 #[derive(Debug, Clone)]
 pub struct MonitorInterval {
-    pub sending_rate: u64, // bits per second
+    pub sending_rate: QuicBandwidth, // bits per second
     pub is_useful: bool,
     pub rtt_fluctuation_tolerance_ratio: f64,
     pub first_packet_sent_time: Instant,
     pub last_packet_sent_time: Instant,
-    pub first_packet_number: u64,
-    pub last_packet_number: u64,
+    pub first_packet_number: QuicPacketNumber,
+    pub last_packet_number: QuicPacketNumber,
     pub bytes_sent: u64,
     pub bytes_acked: u64,
     pub bytes_lost: u64,
@@ -67,7 +72,7 @@ pub struct MonitorInterval {
 impl Default for MonitorInterval {
     fn default() -> Self {
         Self {
-            sending_rate: 0,
+            sending_rate: QuicBandwidth::ZERO,
             is_useful: false,
             rtt_fluctuation_tolerance_ratio: 0.0,
             first_packet_sent_time: Instant::now(),
@@ -137,11 +142,11 @@ pub(super) struct PccMonitorIntervalQueue {
 //     }
 // }
 
-#[derive(Debug, Clone)]
-pub(super) struct AckedPacket {
-    pub packet_number: u64,
-    pub bytes_acked: u64,
-}
+// #[derive(Debug, Clone)]
+// pub(super) struct AckedPacket {
+//     pub packet_number: u64,
+//     pub bytes_acked: u64,
+// }
 
 // 传delegate参数
 impl PccMonitorIntervalQueue {
@@ -174,15 +179,17 @@ impl PccMonitorIntervalQueue {
     /// 这个方法用于检查一个interval是否有足够的可靠RTT
     pub(super) fn enqueue_new_monitor_interval(
         &mut self,
-        sending_rate: u64,
+        sending_rate: QuicBandwidth,
         is_useful: bool,
         rtt_fluctuation_tolerance_ratio: f64,
         rtt: Duration,
     ) {
+        eprint!("enter enqueue_new_monitor_interval");
         if is_useful {
             self.num_useful_intervals += 1;
         }
 
+        // 创建新的interval结构体
         let mut interval = MonitorInterval::default();
         interval.sending_rate = sending_rate;
         interval.is_useful = is_useful;
@@ -231,6 +238,7 @@ impl PccMonitorIntervalQueue {
     ) {
         self.num_available_intervals = 0;
         if self.num_useful_intervals == 0 {
+            eprintln!(" | on_congestion_event | called with no useful intervals.");
             return;
         }
 
@@ -242,6 +250,7 @@ impl PccMonitorIntervalQueue {
 
             let utility_available = PccMonitorIntervalQueue::is_utility_available(interval);
             if utility_available {
+                eprintln!(" | on_congestion_event | utility available");
                 self.num_available_intervals += 1;
                 continue;
             }
@@ -328,6 +337,7 @@ impl PccMonitorIntervalQueue {
         // Remove processed intervals
         while let Some(interval) = self.monitor_intervals.front() {
             if interval.is_useful {
+                eprintln!(" | on_congestion_event | remove used interval");
                 self.num_useful_intervals -= 1;
             }
             self.monitor_intervals.pop_front();
@@ -348,12 +358,12 @@ impl PccMonitorIntervalQueue {
             return false;
         }
 
-        let current_micro = current_ack_interval.as_micros() as f64;
-        let pending_micro = pending_ack_interval.as_micros() as f64;
-        let interval_ratio = if current_micro == 0.0 {
+        let current_micro = current_ack_interval.as_micros();
+        let pending_micro = pending_ack_interval.as_micros();
+        let interval_ratio = if current_micro == 0 {
             0.0
         } else {
-            (pending_micro / current_micro).max(1.0)
+            (pending_micro as f64 / current_micro as f64).max(1.0)
         };
 
         if *avg_interval_ratio < 0.0 {
@@ -410,6 +420,9 @@ impl PccMonitorIntervalQueue {
     }
 
     pub(super) fn on_rtt_inflation_in_starting(&mut self) {
+        // 清空监控队列
+        eprintln!("on_rtt_inflation_in_starting");
+        eprintln!(" | on_rtt_inflation_in_starting | clear monitor_intervals : {:?}", self.monitor_intervals.len());
         self.monitor_intervals.clear();
         self.num_useful_intervals = 0;
         self.num_available_intervals = 0;

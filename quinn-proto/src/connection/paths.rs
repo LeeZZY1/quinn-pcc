@@ -174,6 +174,11 @@ impl RttEstimator {
         self.smoothed.unwrap_or(self.latest)
     }
 
+    /// The latest RTT measurement
+    pub fn get_latest(&self) -> Duration {
+        self.latest
+    }
+
     /// Conservative estimate of RTT
     ///
     /// Takes the maximum of smoothed and latest RTT, as recommended
@@ -185,11 +190,6 @@ impl RttEstimator {
     /// Minimum RTT registered so far for this estimator.
     pub fn min(&self) -> Duration {
         self.min
-    }
-
-    /// Latest RTT registered so far for this estimator.
-    pub fn latest(&self) -> Duration {
-        self.latest
     }
 
     // PTO computed as described in RFC9002#6.2.1
@@ -220,6 +220,7 @@ impl RttEstimator {
             self.var = self.latest / 2;
             self.min = self.latest;
         }
+        // eprintln!("origin rtt info: smooth:{:?}, var:{:?}, min{:?}", self.smoothed.unwrap(), self.var, self.min);
     }
 }
 

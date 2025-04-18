@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::f64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+// use crate::congestion::pcc::quic_time::Delta;
 const K_MAX_PACKET_SIZE: u64 = 1500;
 const K_BITS_PER_BYTE: usize = 8;
 const K_RTT_HISTORY_LEN: usize = 6;
@@ -158,10 +159,11 @@ impl PccUtilityManager {
 
     pub(super) fn transfer_time(&self, bytes: u64, bits_per_second: u64) -> Duration {
         if bits_per_second == 0 {
-            return Duration::new(0, 0);
+            return Duration::ZERO;
         }
         let microseconds = bytes * 8 * 1_000_000 / bits_per_second;
         Duration::from_micros(microseconds)
+        // Delta::from_microseconds(microseconds as u64)
     }
 
     pub(super) fn calculate_utility(&mut self, interval: &MonitorInterval) -> f64 {
@@ -332,11 +334,10 @@ impl PccUtilityManager {
         // Add the transfer time of the last packet in the monitor interval when
         // calculating monitor interval duration.
 
-        let transfer_time = self.transfer_time(K_MAX_PACKET_SIZE, interval.sending_rate);
+        let transfer_time = self.transfer_time(K_MAX_PACKET_SIZE, interval.sending_rate.to_bits_per_second());
         self.interval_stats.interval_duration =
-            ((interval.last_packet_sent_time - interval.first_packet_sent_time + transfer_time)
-                .as_micros() as f64)
-                / 1_000_000.0;
+            ((interval.last_packet_sent_time - interval.first_packet_sent_time + transfer_time).as_micros())
+                as f64 / 1_000_000.0;
 
         self.interval_stats.rtt_ratio = (interval.rtt_on_monitor_start.as_micros() as f64)
             / (interval.rtt_on_monitor_end.as_micros() as f64);
