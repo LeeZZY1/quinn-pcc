@@ -1,8 +1,8 @@
 use crate::congestion::pcc::monitor_interval_queue::MonitorInterval;
 use std::collections::VecDeque;
 use std::f64;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+// use std::sync::Arc;
+use std::time::Duration;
 // use crate::congestion::pcc::quic_time::Delta;
 const K_MAX_PACKET_SIZE: u64 = 1500;
 const K_BITS_PER_BYTE: usize = 8;
@@ -13,7 +13,7 @@ const K_RTT_COEFFICIENT: f64 = -200.0;
 const K_SENDING_RATE_EXPONENT: f64 = 0.9;
 const K_VIVACE_LOSS_COEFFICIENT: f64 = 11.35;
 const K_LATENCY_COEFFICIENT: f64 = 900.0;
-const K_RTT_DEVIATION_COEFFICIENT: f64 = 0.0015;
+// const K_RTT_DEVIATION_COEFFICIENT: f64 = 0.0015;
 const K_HYBRID_UTILITY_RATE_TRANSFORM_FACTOR: f64 = 0.1;
 const K_ALPHA: f64 = 0.1;
 const K_BETA: f64 = 100.0;
@@ -21,10 +21,10 @@ const K_TRENDING_RESET_INTERVAL_RATIO: f64 = 0.95;
 const K_INFLATION_TOLERANCE_GAIN_HIGH: f64 = 2.0;
 const K_INFLATION_TOLERANCE_GAIN_LOW: f64 = 2.0;
 const K_LOST_PACKET_TOLERANCE: usize = 10;
-const K_NUM_MICROS_PER_SECOND: u64 = 1_000_000;
+// const K_NUM_MICROS_PER_SECOND: u64 = 1_000_000;
 
 #[derive(Clone)]
-pub struct IntervalStats {
+pub(super) struct IntervalStats {
     marked_lost_bytes: u64,
     interval_duration: f64,
     rtt_ratio: f64,
@@ -126,36 +126,36 @@ impl PccUtilityManager {
         }
     }
 
-    pub(super) fn get_utility_tag(&self) -> &str {
-        &self.utility_tag
-    }
+    // pub(super) fn get_utility_tag(&self) -> &str {
+    //     &self.utility_tag
+    // }
 
-    pub(super) fn get_utility_parameter(&self, parameter_index: usize) -> f32 {
-        if parameter_index < self.utility_parameters.len() {
-            self.utility_parameters[parameter_index]
-        } else {
-            0.0
-        }
-    }
+    // pub(super) fn get_utility_parameter(&self, parameter_index: usize) -> f32 {
+    //     if parameter_index < self.utility_parameters.len() {
+    //         self.utility_parameters[parameter_index]
+    //     } else {
+    //         0.0
+    //     }
+    // }
 
-    pub(super) fn get_effective_utility_tag(&self) -> &str {
-        &self.effective_utility_tag
-    }
+    // pub(super) fn get_effective_utility_tag(&self) -> &str {
+    //     &self.effective_utility_tag
+    // }
 
-    pub(super) fn set_utility_tag(&mut self, utility_tag: String) {
-        self.utility_tag = utility_tag.clone();
-        self.effective_utility_tag = utility_tag.clone();
-        println!("Using Utility Function: {}", self.utility_tag);
-    }
+    // pub(super) fn set_utility_tag(&mut self, utility_tag: String) {
+    //     self.utility_tag = utility_tag.clone();
+    //     self.effective_utility_tag = utility_tag.clone();
+    //     println!("Using Utility Function: {}", self.utility_tag);
+    // }
 
-    pub(super) fn set_effective_utility_tag(&mut self, utility_tag: String) {
-        self.effective_utility_tag = utility_tag;
-    }
+    // pub(super) fn set_effective_utility_tag(&mut self, utility_tag: String) {
+    //     self.effective_utility_tag = utility_tag;
+    // }
 
-    pub(super) fn set_utility_parameter(&mut self, param: f32) {
-        self.utility_parameters.push(param);
-        println!("Update Utility Parameter: {}", param);
-    }
+    // pub(super) fn set_utility_parameter(&mut self, param: f32) {
+    //     self.utility_parameters.push(param);
+    //     println!("Update Utility Parameter: {}", param);
+    // }
 
     pub(super) fn transfer_time(&self, bytes: u64, bits_per_second: u64) -> Duration {
         if bits_per_second == 0 {
@@ -227,7 +227,7 @@ impl PccUtilityManager {
 
     fn calculate_utility_proportional(
         &self,
-        interval: &MonitorInterval,
+        _interval: &MonitorInterval,
         latency_coeff: f64,
         loss_coeff: f64,
     ) -> f64 {
@@ -248,7 +248,7 @@ impl PccUtilityManager {
         sending_contribution - latency_penalty - loss_penalty
     }
 
-    fn calculate_utility_scavenger(&self, interval: &MonitorInterval, rtt_dev_coeff: f64) -> f64 {
+    fn calculate_utility_scavenger(&self, _interval: &MonitorInterval, rtt_dev_coeff: f64) -> f64 {
         let sending_contribution = f64::powf(
             self.interval_stats.actual_sending_rate_mbps,
             K_SENDING_RATE_EXPONENT,
@@ -286,9 +286,9 @@ impl PccUtilityManager {
         (sending_rate * 1e6 / 8.0) * loss_penalty * latency_penalty * 1000.0
     }
 
-    fn calculate_perfect_utility_vivace(&self, sending_rate: f64) -> f64 {
-        f64::powf(sending_rate, K_SENDING_RATE_EXPONENT)
-    }
+    // fn calculate_perfect_utility_vivace(&self, sending_rate: f64) -> f64 {
+    //     f64::powf(sending_rate, K_SENDING_RATE_EXPONENT)
+    // }
 
     fn prepare_statistics(&mut self, interval: &MonitorInterval) {
         self.pre_processing(interval);
@@ -619,7 +619,7 @@ impl PccUtilityManager {
         }
 
         let trending_gradient = self.interval_stats.trending_gradient;
-        let trending_error = self.interval_stats.trending_gradient_error;
+        let _trending_error = self.interval_stats.trending_gradient_error;
 
         if self.min_trending_gradient < 1e-6
             || trending_gradient.abs() < self.min_trending_gradient / K_BETA

@@ -23,12 +23,8 @@ use quic_bandwidth::QuicBandwidth;
 // use quic_time::{QuicTime, Delta};
 
 mod quic_type;
-use quic_type::{AckedPacket, LostPacket};
+use quic_type::{AckedPacket, LostPacket,AckedPacketVector, LostPacketVector};
 
-const NUM_MILLIS_PER_SECOND: u64 = 1000;
-const NUM_MICROS_PER_MILLI: u64 = 1000;
-const NUM_MICROS_PER_SECOND: u64 = NUM_MICROS_PER_MILLI * NUM_MILLIS_PER_SECOND;
-const NUM_NANOS_PER_SECOND: u64 = 1000 * NUM_MICROS_PER_SECOND;
 
 // 使用外部定义的 Delta 结构体创建常量
 const K_INITIAL_RTT: Duration = Duration::from_micros(100); // 100ms
@@ -57,8 +53,7 @@ const FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_PROBING: f64 = 1.0;
 // const  FLAGS_BYTES_IN_FLIGHT_GAIN: f64 =  2.5;
 // const  FLAGS_EXIT_STARTING_BASED_ON_SAMPLED_BANDWIDTH: bool =  false;
 
-/// PccVivace State Variables.
-///
+
 // PccVivace模式
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Mode {
@@ -90,26 +85,6 @@ impl Default for UtilityInfo {
         }
     }
 }
-
-// trait FromBitsPerSecond {
-//     fn from_bits_per_second(value: f64) -> f64;
-// }
-
-// impl FromBitsPerSecond for f64 {
-//     fn from_bits_per_second(value: f64) -> f64 {
-//         value
-//     }
-// }
-// trait ToBps {
-//     fn to_bps(self) -> f64;
-// }
-
-// // Implement the trait for f64
-// impl ToBps for f64 {
-//     fn to_bps(self) -> f64 {
-//         self * 1e6 // assuming the value is in Mbps and converting to bps
-//     }
-// }
 
 /// PccVivace 变量
 ///
@@ -143,7 +118,8 @@ pub struct PccVivace {
     rtt_updated: bool,
     has_seen_valid_rtt: bool,
     rtt_on_inflation_start: Option<Duration>,
-    ack_packets: VecDeque<AckedPacket>,
+    ack_packets: AckedPacketVector,
+    lost_packets: LostPacketVector,
     largest_packet_num_acked: Option<u64>,
 }
 
@@ -187,7 +163,8 @@ impl PccVivace {
             rtt_updated: false,
             has_seen_valid_rtt: false,
             rtt_on_inflation_start: None,
-            ack_packets: VecDeque::new(),
+            ack_packets: AckedPacketVector::new(),
+            lost_packets: LostPacketVector::new(),
             largest_packet_num_acked: None,
         }
     }
@@ -950,7 +927,7 @@ impl Controller for PccVivace {
         // 更新最新 ACK 时间
         self.update_rtt(now, rtt);
 
-        self.ack_packets.push_back(AckedPacket {
+        self.ack_packets.push(AckedPacket {
             packet_number: self.largest_packet_num_acked.unwrap_or(0) + bytes,
             bytes_acked: bytes, // or event_time
             receive_timestamp: now,
