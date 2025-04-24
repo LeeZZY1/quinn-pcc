@@ -17,7 +17,7 @@ pub(super) type QuicPacketNumber = u64;
 
 // AckedPacket 结构体
 #[derive(Clone, Debug)]
-pub(super) struct AckedPacket {
+pub struct AckedPacket {
     pub packet_number: QuicPacketNumber,
     pub bytes_acked: QuicPacketLength,
     pub receive_timestamp: Instant,

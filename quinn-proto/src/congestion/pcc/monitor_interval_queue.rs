@@ -95,6 +95,8 @@ impl Default for MonitorInterval {
         }
     }
 }
+ 
+
 
 pub(super) trait PccMonitorIntervalQueueDelegateInterface: Send + Sync {
     fn on_utility_available(&self, intervals: &[&MonitorInterval], event_time: Instant);
@@ -168,6 +170,7 @@ impl PccMonitorIntervalQueue {
 
     /// 当前interval的包序号范围
     /// 这个方法用于检查一个包是否在指定的interval范围内
+    /// checked
     pub(super) fn interval_contains_packet(interval: &MonitorInterval, packet_number: u64) -> bool {
         packet_number >= interval.first_packet_number
             && packet_number <= interval.last_packet_number
@@ -176,7 +179,9 @@ impl PccMonitorIntervalQueue {
     pub(super) fn num_useful_intervals(&self) -> usize {
         self.num_useful_intervals
     }
+
     /// 这个方法用于检查一个interval是否有足够的可靠RTT
+    /// checked
     pub(super) fn enqueue_new_monitor_interval(
         &mut self,
         sending_rate: QuicBandwidth,
@@ -184,7 +189,7 @@ impl PccMonitorIntervalQueue {
         rtt_fluctuation_tolerance_ratio: f64,
         rtt: Duration,
     ) {
-        eprint!("enter enqueue_new_monitor_interval");
+        eprintln!("enter enqueue_new_monitor_interval, useful: {:?}, useful_intervals : {:?}", is_useful, self.num_useful_intervals);
         if is_useful {
             self.num_useful_intervals += 1;
         }
@@ -201,6 +206,8 @@ impl PccMonitorIntervalQueue {
         self.monitor_intervals.push_back(interval);
     }
 
+    /// 发包后调用
+    /// checked
     pub(super) fn on_packet_sent(
         &mut self,
         sent_time: Instant,
@@ -208,13 +215,19 @@ impl PccMonitorIntervalQueue {
         bytes: u64,
         sent_interval: Duration,
     ) {
+        eprintln!("enter on_packet_sent, sent_time: {:?}, packet_number: {:?}, bytes: {:?}", sent_time, packet_number, bytes);
+        // 在进入这里之前已经创建了interval，所以正常不会进入这个部分
         if self.monitor_intervals.is_empty() {
             eprintln!("OnPacketSent called with empty queue.");
             return;
         }
 
+        // 拆包
         let interval = self.monitor_intervals.back_mut().unwrap();
+        eprintln!(" | on_packet_sent | interval: {:?}", interval);
         if interval.bytes_sent == 0 {
+            // 当前包是这个interval的第一个包
+            eprintln!(" | on_packet_sent | first packet in interval");
             interval.first_packet_sent_time = sent_time;
             interval.first_packet_number = packet_number;
         }
@@ -225,6 +238,8 @@ impl PccMonitorIntervalQueue {
         interval.packet_sent_intervals.push(sent_interval);
     }
 
+    /// 处理ack和丢包
+    /// checked
     pub(super) fn on_congestion_event(
         &mut self,
         acked_packets: Vec<AckedPacket>,
@@ -236,7 +251,10 @@ impl PccMonitorIntervalQueue {
         event_time: Instant,
         ack_interval: Duration,
     ) {
+        // 将可获取间隔设置为0
         self.num_available_intervals = 0;
+
+        // 如果没有有用的间隔，直接返回
         if self.num_useful_intervals == 0 {
             eprintln!(" | on_congestion_event | called with no useful intervals.");
             return;
@@ -254,7 +272,6 @@ impl PccMonitorIntervalQueue {
                 self.num_available_intervals += 1;
                 continue;
             }
-
             // // Process lost packets
             // for lost_packet in &lost_packets {
             //     // 要知道丢包的包序号
@@ -263,58 +280,85 @@ impl PccMonitorIntervalQueue {
             //         interval.lost_packet_samples.push(lost_packet.clone());
             //     }
             // }
-            interval.bytes_lost += lost_bytes;
+            interval.bytes_lost += lost_bytes;       
 
-            // Process pending acked packets
-            while let Some(acked_packet) = self.pending_acked_packets.pop_front() {
+            for acked_packet in &self.pending_acked_packets {
                 if Self::interval_contains_packet(interval, acked_packet.packet_number) {
                     if interval.bytes_acked == 0 {
+                        // This is the RTT before starting sending at interval.sending_rate.
                         interval.rtt_on_monitor_start = self.pending_avg_rtt;
                     }
                     interval.bytes_acked += acked_packet.bytes_acked;
-
-                    let is_reliable = Self::calculate_reliability(
-                        ack_interval,
-                        self.pending_ack_interval,
-                        latest_rtt,
-                        self.pending_rtt,
-                        &mut self.avg_interval_ratio,
-                        &mut self.burst_flag,
-                        self.pending_avg_rtt,
-                    );
-
-                    let is_reliable_for_gradient = is_reliable;
-
+            
+                    let mut is_reliable = false;
+                    // 不为0才能进入
+                    if !self.pending_ack_interval.is_zero() {
+                        let mut interval_ratio = self.pending_ack_interval.as_micros() as f64
+                            / ack_interval.as_micros() as f64;
+            
+                        if interval_ratio < 1.0 {
+                            interval_ratio = 1.0 / interval_ratio;
+                        }
+                        
+                        // 初始化avg_interval_ratio为-1
+                        if self.avg_interval_ratio < 0.0 {
+                            self.avg_interval_ratio = interval_ratio;
+                        }
+            
+                        if interval_ratio > 50.0 * self.avg_interval_ratio {
+                            self.burst_flag = true;
+                        } else if self.burst_flag {
+                            if latest_rtt > self.pending_rtt
+                                && self.pending_rtt < self.pending_avg_rtt
+                            {
+                                self.burst_flag = false;
+                            }
+                        } else {
+                            is_reliable = true;
+                            interval.num_reliable_rtt += 1;
+                        }
+            
+                        self.avg_interval_ratio =
+                            self.avg_interval_ratio * 0.9 + interval_ratio * 0.1;
+                    }
+            
+                    let mut is_reliable_for_gradient_calculation = false;
+                    if is_reliable {
+                        // if self.latest_rtt > self.pending_rtt {
+                        is_reliable_for_gradient_calculation = true;
+                        interval.num_reliable_rtt_for_gradient_calculation += 1;
+                    }
+            
                     interval.packet_rtt_samples.push(PacketRttSample {
                         packet_number: acked_packet.packet_number,
                         sample_rtt: self.pending_rtt,
                         ack_timestamp: self.pending_event_time,
                         is_reliable,
-                        is_reliable_for_gradient_calculation: is_reliable_for_gradient,
+                        is_reliable_for_gradient_calculation,
                     });
-
-                    interval.num_reliable_rtt += is_reliable as usize;
-                    interval.num_reliable_rtt_for_gradient_calculation +=
-                        is_reliable_for_gradient as usize;
 
                     if interval.num_reliable_rtt >= K_MIN_RELIABLE_RTT {
                         interval.has_enough_reliable_rtt = true;
                     }
                 }
             }
+            
 
             if PccMonitorIntervalQueue::is_utility_available(interval) {
                 interval.rtt_on_monitor_end = avg_rtt;
                 interval.min_rtt = min_rtt;
                 has_invalid_utility = Self::has_invalid_utility(interval);
-                self.num_available_intervals += 1;
                 if self.num_available_intervals >= self.num_useful_intervals {
                     break;
                 }
+                self.num_available_intervals += 1;
+                assert!(self.num_available_intervals <= self.num_useful_intervals);
             }
         }
 
-        self.pending_acked_packets = acked_packets.into_iter().collect();
+        self.pending_acked_packets.clear();
+        self.pending_acked_packets.extend(acked_packets.iter().cloned());
+
         self.pending_rtt = latest_rtt;
         self.pending_avg_rtt = avg_rtt;
         self.pending_ack_interval = ack_interval;
@@ -325,11 +369,18 @@ impl PccMonitorIntervalQueue {
         }
 
         if !has_invalid_utility {
+
+            assert!(self.num_available_intervals > 0);
+
             let useful_intervals: Vec<&MonitorInterval> = self
                 .monitor_intervals
                 .iter()
                 .filter(|i| i.is_useful)
                 .collect();
+
+            assert!(self.num_available_intervals == useful_intervals.len());
+
+            eprintln!("call on_utility_available impl in pcc mod.rs");
             self.my_delegate
                 .on_utility_available(&useful_intervals, event_time);
         }
@@ -345,80 +396,63 @@ impl PccMonitorIntervalQueue {
         self.num_available_intervals = 0;
     }
 
-    fn calculate_reliability(
-        current_ack_interval: Duration,
-        pending_ack_interval: Duration,
-        current_rtt: Duration,
-        pending_rtt: Duration,
-        avg_interval_ratio: &mut f64,
-        burst_flag: &mut bool,
-        pending_avg_rtt: Duration,
-    ) -> bool {
-        if pending_ack_interval.is_zero() {
-            return false;
-        }
-
-        let current_micro = current_ack_interval.as_micros();
-        let pending_micro = pending_ack_interval.as_micros();
-        let interval_ratio = if current_micro == 0 {
-            0.0
-        } else {
-            (pending_micro as f64 / current_micro as f64).max(1.0)
-        };
-
-        if *avg_interval_ratio < 0.0 {
-            *avg_interval_ratio = interval_ratio;
-        } else {
-            *avg_interval_ratio = *avg_interval_ratio * 0.9 + interval_ratio * 0.1;
-        }
-
-        if interval_ratio > 50.0 * *avg_interval_ratio {
-            *burst_flag = true;
-        } else if *burst_flag {
-            if current_rtt > pending_rtt && pending_rtt < pending_avg_rtt {
-                *burst_flag = false;
-            }
-        }
-
-        !*burst_flag
-    }
-
+    /// 检查interval是否有足够的可靠RTT且所有发送的包已被处理
+    /// checked
     fn is_utility_available(interval: &MonitorInterval) -> bool {
         interval.has_enough_reliable_rtt
             && (interval.bytes_acked + interval.bytes_lost) == interval.bytes_sent
     }
 
+    /// 检查interval是否有无效的utility
+    /// checked
     fn has_invalid_utility(interval: &MonitorInterval) -> bool {
         interval.first_packet_sent_time == interval.last_packet_sent_time
     }
 }
 
 // 其他辅助方法和接口实现
+/// 监控间隔队列
+/// checked
 impl PccMonitorIntervalQueue {
+    /// 获取第一个interval
+    /// checked
     pub(super) fn front(&self) -> Option<&MonitorInterval> {
+        assert!(!self.monitor_intervals.is_empty());
         self.monitor_intervals.front()
     }
 
+    /// 获取最后一个interval
+    /// checked
     pub(super) fn current(&self) -> Option<&MonitorInterval> {
+        assert!(!self.monitor_intervals.is_empty());
         // 从 monitor_intervals 这个容器中返回当前（最后一个）MonitorInterval，
         // 它返回的是一个 Option<&MonitorInterval>
         self.monitor_intervals.back()
     }
 
+    /// 延长当前interval的持续时间
+    /// checked
     pub(super) fn extend_current_interval(&mut self) {
+        assert!(!self.monitor_intervals.is_empty(), "monitor_intervals is empty");
         if let Some(interval) = self.monitor_intervals.back_mut() {
             interval.is_monitor_duration_extended = true;
         }
     }
 
+    /// 判断当前interval队列是否为空
+    /// checked
     pub(super) fn is_empty(&self) -> bool {
         self.monitor_intervals.is_empty()
     }
 
+    /// 获取当前interval的数量
+    /// checked
     pub(super) fn size(&self) -> usize {
         self.monitor_intervals.len()
     }
 
+    /// 在启动阶段出现RTT膨胀时调用
+    /// checked
     pub(super) fn on_rtt_inflation_in_starting(&mut self) {
         // 清空监控队列
         eprintln!("on_rtt_inflation_in_starting");

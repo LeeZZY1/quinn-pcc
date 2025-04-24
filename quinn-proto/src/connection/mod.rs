@@ -1356,6 +1356,7 @@ impl Connection {
         space: SpaceId,
         ack: frame::Ack,
     ) -> Result<(), TransportError> {
+        // 如果对方 ACK 了我们从未发送的 packet number，这是协议错误。
         if ack.largest >= self.spaces[space].next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
@@ -1366,6 +1367,8 @@ impl Connection {
                 .map_or(true, |pn| ack.largest > pn)
             {
                 space.largest_acked_packet = Some(ack.largest);
+                // 如果当前 ACK 的 largest packet 比之前记录的大，就更新它。
+                // 并记录下该 packet 的发送时间（后续用于计算 RTT）。
                 if let Some(info) = space.sent_packets.get(&ack.largest) {
                     // This should always succeed, but a misbehaving peer might ACK a packet we
                     // haven't sent. At worst, that will result in us spuriously reducing the
@@ -1379,6 +1382,7 @@ impl Connection {
         };
 
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
+        // 对于 ACKed 的 packet number，在我们的 sent_packets 表中查找，加入 newly_acked。
         let mut newly_acked = ArrayRangeSet::new();
         for range in ack.iter() {
             self.packet_number_filter.check_ack(space, range.clone())?;
@@ -1387,13 +1391,17 @@ impl Connection {
             }
         }
 
+        // 如果没有 ACK 到任何 packet，就不处理了
         if newly_acked.is_empty() {
             return Ok(());
         }
 
+        // 遍历 newly_acked 包，处理每个被 ACK 的 packet
         let mut ack_eliciting_acked = false;
         for packet in newly_acked.elts() {
+            // take() 会把 sent_packets 中的数据取出来，相当于“标记已确认并移除”。
             if let Some(info) = self.spaces[space].take(packet) {
+                // 认为小于 acked 的 ACK 我们都收到了，简化状态管理。
                 if let Some(acked) = info.largest_acked {
                     // Assume ACKs for all packets below the largest acknowledged in `packet` have
                     // been received. This can cause the peer to spuriously retransmit if some of

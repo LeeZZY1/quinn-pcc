@@ -1,6 +1,7 @@
 use super::{Controller, ControllerFactory, BASE_DATAGRAM_SIZE};
 use crate::connection::RttEstimator;
 use crate::Duration;
+use std::str::ParseBoolError;
 use std::{any::Any, ops::Sub};
 use std::sync::Arc;
 use std::time::Instant;
@@ -25,7 +26,7 @@ use quic_type::{AckedPacket, LostPacket,AckedPacketVector, LostPacketVector};
 
 
 // 使用外部定义的 Delta 结构体创建常量
-const K_INITIAL_RTT: Duration = Duration::from_micros(100); // 100ms
+const K_INITIAL_RTT: Duration = Duration::from_millis(100); // 100ms
 const K_MEGABIT: u64 = 1024 * 1024;
 const K_DECISION_MADE_STEP_SIZE: f64 = 0.02;
 const K_PROBING_STEP_SIZE: f64 = 0.05;
@@ -130,13 +131,13 @@ impl PccVivace {
         Self {
             config,
             current_mtu: current_mtu as u64,
-            conn_start_time: Some(now),
-            monitor_duration: Duration::from_secs(0),
-            rtt_deviation: Duration::from_secs(0),
-            min_rtt_deviation: Duration::from_secs(0),
-            latest_rtt: Duration::from_secs(0),
+            conn_start_time: None,
+            monitor_duration: Duration::from_micros(0),
+            rtt_deviation: Duration::from_micros(0),
+            min_rtt_deviation: Duration::from_micros(0),
+            latest_rtt: Duration::from_micros(0),
             min_rtt: Default::default(),
-            avg_rtt: Duration::from_secs(0),
+            avg_rtt: Duration::from_micros(0),
             max_cwnd_bytes: 0,
             delegate,
             monitor_queue,
@@ -144,7 +145,7 @@ impl PccVivace {
             minimum_rate: 1024,
             // 单位是bps
             sending_rate: QuicBandwidth::from_bytes_and_time_delta(
-                initial_window , &K_INITIAL_RTT
+                initial_window * BASE_DATAGRAM_SIZE , &K_INITIAL_RTT
             ),
             //sending_rate: initial_window as f64 * 8.0 / K_INITIAL_RTT,
             latest_utility_info: Default::default(),
@@ -166,9 +167,11 @@ impl PccVivace {
     }
 
     /// 创建新的监控间隔
+    /// checked
     pub fn create_new_interval(&mut self, event_time: Instant) -> bool {
         eprintln!("enter create_new_interval");
         // 如果监控间隔队列为空，则创建新的间隔
+        // 初次启动时会被调用
         if self.monitor_queue.is_empty() {
             eprintln!("monitor_queue_is_empty");
             return true;
@@ -271,6 +274,10 @@ impl PccVivace {
     //     self.sending_rate
     // }
     /// 返回无用间隔的发送速率
+    /// 若为启动阶段，速率减半
+    /// 若为探测阶段，速率减小
+    /// 若为决策阶段，速率根据变化方向改变
+    /// checked
     pub fn get_sending_rate_for_non_useful_interval(&self) -> QuicBandwidth {
         eprintln!("enter get_sending_rate_for_non_useful_interval");
         match self.mode {
@@ -367,6 +374,7 @@ impl PccVivace {
     }
 
     /// 获取当前间隔数量
+    /// checked
     pub fn get_num_interval_groups_in_probing(&self) -> usize {
         return 3;
     }
@@ -463,25 +471,30 @@ impl PccVivace {
         }
     }
 
+    /// 创建有用的间隔
+    /// checked
     fn create_useful_interval(&self) -> bool {
-        eprintln!("create_useful_interval: ");
+        eprintln!("enter create_useful_interval: ");
         if self.avg_rtt.as_micros() == 0 {
             // 没有 RTT 数据，说明刚开始连接，不能创建 useful interval
             assert!(self.mode == Mode::Starting);
             return false;
         }
 
-        // STARTING 和 DECISION_MADE 模式下最多允许一个 useful interval
-        // PROBING 模式下最多允许 2 * 组数个 useful interval
+        // STARTING 和 DECISION_MADE 模式下最多允许1个 useful interval
+        // PROBING 模式下最多允许 2 * 3组数个 useful interval
         let max_useful = if self.mode == Mode::Probing {
             2 * self.get_num_interval_groups_in_probing()
         } else {
             1
         };
 
+        // 如果有用间隔小于最大有用间隔数量，就可以创建有用间隔
         self.monitor_queue.num_useful_intervals() < max_useful
     }
 
+    /// 获取最大 RTT 波动容忍度
+    /// checked
     fn get_max_rtt_fluctuation_tolerance(&self) -> f64 {
         eprintln!("get_max_rtt_fluctuation_tolerance");
         // 1. 基础容忍比率
@@ -490,22 +503,25 @@ impl PccVivace {
             _ => FLAGS_MAX_RTT_FLUCTUATION_TOLERANCE_RATIO_IN_DECISION_MADE,
         };
 
-        // 2. 如果启用了 RTT 偏差控制
+        // 2. 如果启用了 RTT 偏差控制，默认为true
         if FLAGS_ENABLE_RTT_DEVIATION_BASED_EARLY_TERMINATION {
             let tolerance_gain = match self.mode {
+                // 2.5
                 Mode::Starting => FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_STARTING,
+                // 1
                 Mode::Probing => FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_PROBING,
+                // 1.5
                 Mode::DecisionMade => FLAGS_RTT_FLUCTUATION_TOLERANCE_GAIN_IN_DECISION_MADE,
             };
 
             let rtt_dev_us = self.rtt_deviation.as_micros();
             let avg_rtt_us = if self.avg_rtt.is_zero() {
-                K_INITIAL_RTT * 1000000
+                K_INITIAL_RTT.as_micros()
             } else {
-                self.avg_rtt
+                self.avg_rtt.as_micros()
             };
 
-            let dynamic_ratio = tolerance_gain * rtt_dev_us as f64 / avg_rtt_us.as_micros() as f64;
+            let dynamic_ratio = tolerance_gain * rtt_dev_us as f64 / avg_rtt_us as f64;
             tolerance_ratio = tolerance_ratio.min(dynamic_ratio);
         }
 
@@ -642,13 +658,15 @@ impl PccVivace {
 
     /// 处理可用的效用
     /// 参数：可用的效用信息useful_intervals，事件时间event_time
+    /// 没有被调用过？？？
+    /// 当monitor interval中的congestion event被调用的时候，才有可能进入这个函数
     ///
     pub fn on_utility_available(
         &mut self,
         useful_intervals: &[&MonitorInterval],
         _event_time: Instant,
     ) {
-        eprintln!("enter on_utility_available");
+        eprintln!("enter pcc mod.rs on_utility_available");
         // 计算所有可用间隔（useful_intervals）的 utility（效用），
         // 并将这些效用信息存储在 utility_info 向量中
         let mut utility_info = Vec::new();
@@ -738,14 +756,16 @@ impl PccVivace {
         }
     }
 
+    /// 更新 RTT
+    /// 参考pccsender中的update_rtt函数
     fn update_rtt(&mut self, event_time: Instant, rtt: &RttEstimator) {
         eprint!("enter fn update_rtt");
-        // 参考pccsender中的update_rtt函数
+        
         let rtt_value = Duration::from_micros(rtt.get_latest().as_micros() as u64);
 
         // 更新 latest_rtt_
         self.latest_rtt = Duration::from_micros(rtt_value.as_micros() as u64);
-        //Duration::from_micros(rtt_value.as_micros() as u64);
+
         eprint!(" | update rtt | latest_rtt: {:?}", self.latest_rtt);
         // 更新 RTT 方差（rtt_deviation_）
         // us为单位
@@ -789,12 +809,12 @@ impl PccVivace {
 
         // 更新最新 ACK 时间
         self.latest_ack_timestamp = event_time;
-        self.rtt_updated = true;
+        //self.rtt_updated = true;
     }
 
     /// 检查是否发生了 RTT 膨胀
     pub fn check_for_rtt_inflation(&mut self) -> bool {
-        eprintln!("check_for_rtt_inflation");
+        eprintln!("enter check_for_rtt_inflation");
         // 如果队列为空、没有 RTT 数据、或者当前 RTT 没有超过平均 RTT，直接返回 false
         if self.monitor_queue.is_empty()
             || self
@@ -852,45 +872,97 @@ impl PccVivace {
 
         is_inflated
     }
+
     /// 将当前的发送速率转换为拥塞窗口大小
     /// 返回值：拥塞窗口大小
+    /// 参考pccsender中的GetCongestionWindow函数
+    /// checked
     pub fn get_cwnd(&self) -> u64 {
-        // eprint!("call get_cwnd");
-        // eprint!(" | get sending_rate: {:?} bps", self.sending_rate);
-        // let rtt = self.min_rtt.as_micros() as f64;
-        // eprint!(" | get min_rtt: {:?} ms", rtt.as_millis());
-        // // 为了不损失精确性
-        // let mut cwnd = (self.sending_rate * BASE_DATAGRAM_SIZE *rtt as f64) / 8.0 / NUM_MICROS_PER_SECOND;
-        // eprint!(" | calculate cwnd: {:?}", cwnd);
-        // // 保证最小值是 K_MAX_INITIAL_CONGESTION_WINDOW = 200
-        // cwnd = cwnd.max(K_MAX_INITIAL_CONGESTION_WINDOW as f64);
-        // eprintln!(" | get cwnd: {:?}", cwnd);
-        // cwnd as u64
-        let rtt_secs = self.min_rtt.as_secs() as f64; // 直接获得秒数
-        let bdp_bytes = (self.sending_rate * rtt_secs).to_bytes_per_second(); // 转成字节
-
-        // 设置一个最小窗口（单位：字节）
-        let cwnd_bytes = bdp_bytes.max(K_MAX_INITIAL_CONGESTION_WINDOW * BASE_DATAGRAM_SIZE);
+        eprintln!("enter get_cwnd");
+        let bdp_bytes = self.sending_rate.to_bytes_per_period(&self.min_rtt);
+        // 设置一个最小窗口（单位：字节）为4倍的基础数据报大小
+        // 4 * 1400 = 5600
+        let cwnd_bytes = bdp_bytes.max(4 * BASE_DATAGRAM_SIZE);
         cwnd_bytes as u64
     }
+
+    /// 处理拥塞事件
+    pub fn pcc_on_congestion_event(
+        &mut self,
+        update_rtt: bool,
+        rtt: &RttEstimator,
+        event_time: Instant,
+        acked_packets: Vec<AckedPacket>,
+        lost_bytes: u64,
+    ) {
+        if self.latest_ack_timestamp == Instant::now() {
+            self.latest_ack_timestamp = event_time;
+        }
+
+        let mut ack_interval = Duration::from_micros(0);
+        if update_rtt {
+            ack_interval = event_time - self.latest_ack_timestamp;
+            self.update_rtt(event_time, rtt);
+        }
+
+        let avg_rtt = self.avg_rtt;
+
+        if !self.has_seen_valid_rtt {
+            self.has_seen_valid_rtt = true;
+            let initial_rtt = K_INITIAL_RTT;
+            if self.latest_rtt < initial_rtt {
+                let gain = initial_rtt.as_micros() as f64 / self.latest_rtt.as_micros() as f64;
+                self.sending_rate = self.sending_rate * gain;
+            }
+        }
+
+        // 进入probe阶段的核心步骤！
+        // 在最新的RTT没有超过平均值时不会进入这个if语句，第一次收到ack不会进入。
+        if matches!(self.mode, Mode::Starting) && self.check_for_rtt_inflation() {
+            eprintln!(" | on_congestion_event | RTT inflation detected in STARTING mode, enter PROBING");
+            // 清空监控队列和统计信息
+            self.monitor_queue.on_rtt_inflation_in_starting();
+            // 进入探测阶段
+            self.enter_probing();
+            return;
+        }
+
+        self.monitor_queue.on_congestion_event(
+            acked_packets.clone().into(),
+            lost_bytes,
+            avg_rtt,
+            self.latest_rtt,
+            self.min_rtt,
+            event_time,
+            ack_interval,
+        );
+
+    }   
 }
 
+/// PCC-Vivace 控制器的实现
 impl Controller for PccVivace {
+    /// 处理发送的包
+    /// 参数：当前时间now，发送的字节数bytes，包号packet_number
+    /// 参考pccsender中的onpacketsent函数
+    /// checked
     fn on_sent(&mut self, now: Instant, bytes: u64, packet_number: u64) {
         eprintln!("call on_sent");
         // 初始化连接开始时间
         if self.conn_start_time.is_none() {
             self.conn_start_time = Some(now);
-            self.conn_start_time = Some(now);
             self.latest_sent_timestamp = now;
+            eprintln!(" | on_sent | conn_start_time is firstly assigned with: {:?}", self.conn_start_time);
         }
 
         // 创建新的监控间隔
         if self.create_new_interval(now) {
-            eprint!(" | on sent | create_new_interval");
+            eprintln!(" | on sent | create_new_interval");
             self.maybe_set_sending_rate();
+            // 设置监控间隔持续时间为minrtt
             self.monitor_duration = self.min_rtt * 1;
 
+            // 初始时，is useful为false
             let is_useful = self.create_useful_interval();
             self.monitor_queue.enqueue_new_monitor_interval(
                 if is_useful {
@@ -916,6 +988,8 @@ impl Controller for PccVivace {
         self.latest_sent_timestamp = now;
     }
 
+    /// 处理接收到的 ACK
+    /// checked
     fn on_ack(
         &mut self,
         now: Instant,
@@ -925,32 +999,18 @@ impl Controller for PccVivace {
         rtt: &RttEstimator,
     ) {
         eprintln!("call on_ack");
-        // 更新最新 ACK 时间
-        self.update_rtt(now, rtt);
 
+        // 包序号要怎么获取？每ack一次我就+1
         self.ack_packets.push(AckedPacket {
-            packet_number: self.largest_packet_num_acked.unwrap_or(0) + bytes,
+            packet_number: self.largest_packet_num_acked.unwrap_or(0) + 1,
             bytes_acked: bytes, // or event_time
             receive_timestamp: now,
         });
 
-        // 拆分oncongestionevent函数的一部分出来
-        if self.latest_ack_timestamp == Instant::now() {
-            self.latest_ack_timestamp = now;
-        }
+        // 处理ack时丢包为0
+        let lost_bytes = 0;
+        self.pcc_on_congestion_event(true, rtt, now, self.ack_packets.clone(), lost_bytes);
 
-        if !self.has_seen_valid_rtt {
-            self.has_seen_valid_rtt = true;
-            let initial_rtt = K_INITIAL_RTT;
-            if self.latest_rtt < initial_rtt {
-                let gain = initial_rtt.as_micros() as f64 / self.latest_rtt.as_micros() as f64;
-                self.sending_rate = self.sending_rate * gain;
-            }
-        }
-        eprintln!(
-            " | on_ack | now={:?}, bytes={}, rtt={:?}",
-            now, bytes, self.latest_rtt
-        );
     }
 
     fn on_end_acks(
@@ -963,6 +1023,9 @@ impl Controller for PccVivace {
         self.largest_packet_num_acked = largest_packet_num_acked;
     }
 
+
+    /// 处理拥塞事件
+    /// checked
     fn on_congestion_event(
         &mut self,
         now: Instant,
@@ -971,66 +1034,19 @@ impl Controller for PccVivace {
         lost_bytes: u64,
     ) {
         eprintln!("call on_congestion_event");
-        // 初始化 latest_ack_timestamp
-        // if self.latest_ack_timestamp == Instant::now() {
-        //     self.latest_ack_timestamp = now;
-        // }
 
-        // let mut ack_interval = Duration::from_micros(0);
-
-        // if self.rtt_updated {
-        //     ack_interval = now.duration_since(self.latest_ack_timestamp);
-        //     // self.update_rtt(now, rtt);
-        // }
-
-        // let avg_rtt = self.avg_rtt;
-
-        // if !self.has_seen_valid_rtt {
-        //     self.has_seen_valid_rtt = true;
-        //     let initial_rtt = Duration::from_micros(K_INITIAL_RTT as u64);
-        //     if self.latest_rtt < initial_rtt {
-        //         let gain = initial_rtt.as_micros() as f64 / self.latest_rtt.as_micros() as f64;
-        //         self.sending_rate *= gain;
-        //     }
-        // }
-        
-        // 进入probe阶段的核心步骤！
-        if matches!(self.mode, Mode::Starting) && self.check_for_rtt_inflation() {
-            eprintln!(" | on_congestion_event | RTT inflation detected in STARTING mode, enter PROBING");
-            // 清空监控队列和统计信息
-            self.monitor_queue.on_rtt_inflation_in_starting();
-            // 进入探测阶段
-            self.enter_probing();
-            return;
-        }
-
-        let avg_rtt = self.avg_rtt;
-
-        let mut ack_interval = Duration::from_micros(0);
-
-        if self.rtt_updated {
-            ack_interval = now.duration_since(self.latest_ack_timestamp);
-        }
-
-        self.monitor_queue.on_congestion_event(
-            self.ack_packets.clone().into(),
-            lost_bytes,
-            avg_rtt,
-            self.latest_rtt,
-            self.min_rtt,
-            now,
-            ack_interval,
-        );
-        eprintln!(
-            " | on_congestion_event: now={:?}, lost_bytes={}, avg_rtt={:?}, min_rtt={:?}",
-            now, lost_bytes, avg_rtt, self.min_rtt
-        );
+        // 空向量，长度为0
+        let acked_packets_ = AckedPacketVector::new();
+        // 处理拥塞事件时update rtt为false，不会更新rtt，所以rtt参数是随便写的
+        let rtt_estimator = RttEstimator::new(self.avg_rtt); // Create an instance of RttEstimator
+        self.pcc_on_congestion_event(false, &rtt_estimator, now, acked_packets_, lost_bytes);
     }
 
     fn on_mtu_update(&mut self, _new_mtu: u16) {}
     
     fn window(&self) -> u64 {
         eprintln!("call window");
+        eprintln!(" | window | get cwnd calculate: {:?}", self.get_cwnd());
         //self.get_cwnd()
         // bbr2窗口：10-20000
 	    return 20000;
@@ -1048,9 +1064,11 @@ impl Controller for PccVivace {
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
+
     fn pacing_window(&self) -> u64 {
         eprintln!("call pacing_window");
-        self.get_cwnd()
+        // self.get_cwnd()
+        return 20000;
     }
 }
 
